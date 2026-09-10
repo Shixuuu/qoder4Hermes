@@ -1,0 +1,17 @@
+# Merge into ~/.hermes/config.yaml
+# Point Hermes at a *local* OpenAI-compatible bridge, not at api.qoder.com.cn.
+# Keep the Qoder CN PAT on the bridge (QODERCN_PERSONAL_ACCESS_TOKEN), not here.
+
+model:
+  default: qwen3.8-max
+  provider: custom:qoder-cn-local
+
+providers:
+  qoder-cn-local:
+    name: Qoder CN (local bridge)
+    base_url: http://127.0.0.1:3000/v1
+    api_key: not-used
+    transport: chat_completions
+    models:
+      qwen3.8-max: {}
+      Qwen3.8-Max: {}
