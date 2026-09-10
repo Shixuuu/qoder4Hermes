@@ -55,8 +55,18 @@ Qoder CN model service  →  CN credits / monthly quota
 
 1. Create a CN PAT at [Qoder Account Integrations](https://qoder.cn/account/integrations) (or console **Settings → personal access tokens**), **or** run `qoderclicn login`.
 2. Put the PAT only on the bridge: `QODERCN_PERSONAL_ACCESS_TOKEN` (CLI-style bridges) and/or `QODER_PAT` when a bridge talks to `api.qoder.com.cn`. Do **not** paste the PAT into Hermes or OpenCode.
-3. Start a CN-capable local bridge (listen on `127.0.0.1` only).
+3. Start a CN-capable local bridge (listen on `127.0.0.1` only). `qoderclicn login` is enough; a PAT env is optional.
 4. Point the coding agent at `http://127.0.0.1:<port>/v1` with a placeholder API key and a real CN model id (`qwen3.8-max` / `Qwen3.8-Max`; confirm with `GET /v1/models`).
+
+**Live-verified on this machine (2026-09-10):** `qoderclicn` was logged in (no `QODERCN_PERSONAL_ACCESS_TOKEN`). After pointing [lininn/qorder-proxy](https://github.com/lininn/qorder-proxy) at `~/.qoder-cn/.auth/user` (current CLI stores login there; upstream still mentions `~/.qoderworkcn/.auth-cn/user`), `http://127.0.0.1:3000/v1` returned `GET /v1/models` including `qwen3.8-max`, and two `POST /v1/chat/completions` returned non-empty assistant text (`ALPHA`, `BRAVO`) using CN credits.
+
+```bash
+# apply the login-path + Qwen3.8-Max catalog tweak, then start
+python3 scripts/apply_qorder_proxy_cn_login.py bridges/qorder-proxy
+cd bridges/qorder-proxy && npm install && node bin/qorder-proxy.js run --backend cn --port 3000 --host 127.0.0.1
+# in another terminal:
+python3 scripts/live_openai_check.py --base-url http://127.0.0.1:3000/v1 --model qwen3.8-max
+```
 
 Prefer this chat-completions HTTP surface over shelling the coding agent out to `qoderclicn -p`. The CLI print mode is a nested agent (tools, extra prompt, extra credits), not a raw inference provider.
 
