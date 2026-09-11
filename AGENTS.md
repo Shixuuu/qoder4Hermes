@@ -24,7 +24,7 @@ Exit codes:
 | --- | --- |
 | 0 | API healthy at `http://127.0.0.1:8787/v1` |
 | 1 | install/start failed (see stderr or `--json`) |
-| 2 | **login missing** — operator must run `qoderclicn login` or set `QODERCN_PERSONAL_ACCESS_TOKEN` / `QODER_PAT`, then re-run `setup --yes` |
+| 2 | **login missing** — operator runs `qoder-cn-infer login --browser` or `qoder-cn-infer login --pat --token pt-…`, or sets `QODERCN_PERSONAL_ACCESS_TOKEN`, then `setup --yes` |
 
 `--yes` / `QODER_CN_YES=1` never waits for Enter and never opens a blocking TTY prompt.
 
@@ -39,7 +39,7 @@ node bin/qoder-cn-infer.mjs status --json
 ## What setup does automatically
 
 - Requires Node 18+ (already present, or `scripts/install.sh` unpacks official Node into `~/.local`)
-- `npm install -g @qodercn-ai/qoderclicn` if `qoderclicn` is missing
+- `npm install -g @qodercn-ai/qoderclicn` if `qoderclicn` is missing **and** you are using browser login (skipped for PAT)
 - Symlinks `~/.local/bin/qoder-cn-infer` (not `qodercn` / `qoderclicn`)
 - Starts a user systemd service when available, otherwise a detached Node process
 - Writes Hermes (`~/.hermes/config.yaml`) and OpenCode (`~/.config/opencode/opencode.json`) provider blocks

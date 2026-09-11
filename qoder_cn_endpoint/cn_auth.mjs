@@ -28,12 +28,25 @@ export function loadCliLogin(home = os.homedir()) {
   return { machineId, creds };
 }
 
+export const STORED_PAT_PATH = path.join(
+  os.homedir(),
+  ".config",
+  "qoder-cn-infer",
+  "pat"
+);
+
 export function envPat() {
-  return (
+  const env = (
     process.env.QODERCN_PERSONAL_ACCESS_TOKEN ||
     process.env.QODER_PAT ||
     ""
   ).trim();
+  if (env) return env;
+  try {
+    return fs.readFileSync(STORED_PAT_PATH, "utf8").trim();
+  } catch {
+    return "";
+  }
 }
 
 export async function exchangePat(pat, httpsRequest = defaultHttpsRequest) {

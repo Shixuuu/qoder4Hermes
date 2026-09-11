@@ -32,7 +32,17 @@ You should see green ticks:
 ✓ clients        Hermes + OpenCode
 ```
 
-If **login** is red, a browser opens. Sign in, go back to the terminal, press **Enter**.
+If **login** is red, choose:
+
+1. **Browser** — official `qoderclicn login` (recommended)
+2. **PAT** — paste a token from [qoder.cn/account/integrations](https://qoder.cn/account/integrations)
+
+Or later:
+
+```bash
+qoder-cn-infer login --browser
+qoder-cn-infer login --pat
+```
 
 ### 3. Use it
 

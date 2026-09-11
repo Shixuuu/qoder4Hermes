@@ -16,6 +16,15 @@ test("parseArgs understands --yes and --json", () => {
   assert.equal(a._[0], "setup");
 });
 
+test("parseArgs login --browser and --pat --token", () => {
+  const b = parseArgs(["login", "--browser"]);
+  assert.equal(b.browser, true);
+  assert.equal(b.pat, false);
+  const p = parseArgs(["login", "--pat", "--token", "pt-example"]);
+  assert.equal(p.pat, true);
+  assert.equal(p.token, "pt-example");
+});
+
 test("qoder-cn-infer help and version exit 0", () => {
   const help = spawnSync(process.execPath, [CLI, "help"], { encoding: "utf8" });
   assert.equal(help.status, 0, help.stderr);

@@ -30,26 +30,56 @@ const UNIT_NAME = "qoder-cn-infer.service";
 const UNIT_PATH = path.join(os.homedir(), ".config", "systemd", "user", UNIT_NAME);
 
 const tty = process.stdout.isTTY;
+const wrap = (code, s) => (tty ? `\x1b[${code}m${s}\x1b[0m` : s);
 const c = {
-  bold: (s) => (tty ? `\x1b[1m${s}\x1b[0m` : s),
-  dim: (s) => (tty ? `\x1b[2m${s}\x1b[0m` : s),
-  cyan: (s) => (tty ? `\x1b[36m${s}\x1b[0m` : s),
-  green: (s) => (tty ? `\x1b[32m${s}\x1b[0m` : s),
-  red: (s) => (tty ? `\x1b[31m${s}\x1b[0m` : s),
-  yellow: (s) => (tty ? `\x1b[33m${s}\x1b[0m` : s),
-  ok: (s) => (tty ? `\x1b[32m✓\x1b[0m ${s}` : `ok  ${s}`),
-  bad: (s) => (tty ? `\x1b[31m✗\x1b[0m ${s}` : `err ${s}`),
-  skip: (s) => (tty ? `\x1b[33m•\x1b[0m ${s}` : `..  ${s}`),
+  bold: (s) => wrap("1", s),
+  dim: (s) => (tty ? `\x1b[38;2;161;161;170m${s}\x1b[0m` : s),
+  mag: (s) => (tty ? `\x1b[38;2;196;132;252m${s}\x1b[0m` : s),
+  cyan: (s) => (tty ? `\x1b[38;2;125;211;252m${s}\x1b[0m` : s),
+  green: (s) => (tty ? `\x1b[38;2;52;211;153m${s}\x1b[0m` : s),
+  red: (s) => (tty ? `\x1b[38;2;251;113;133m${s}\x1b[0m` : s),
+  yellow: (s) => (tty ? `\x1b[38;2;251;191;36m${s}\x1b[0m` : s),
+  fg: (s) => (tty ? `\x1b[38;2;228;228;231m${s}\x1b[0m` : s),
+  ok: (s) => `${tty ? "\x1b[38;2;52;211;153m✔\x1b[0m" : "ok "} ${s}`,
+  bad: (s) => `${tty ? "\x1b[38;2;251;113;133m✖\x1b[0m" : "err"} ${s}`,
+  skip: (s) => `${tty ? "\x1b[38;2;161;161;170m○\x1b[0m" : ".. "} ${s}`,
 };
+const PAT_FILE = path.join(CONFIG_DIR, "pat");
+
+function rule(width = 48) {
+  return c.dim("─".repeat(width));
+}
+
+function banner(subtitle) {
+  console.log("");
+  console.log(`  ${c.bold(c.mag("qoder-cn-infer"))}  ${c.dim(VERSION)}`);
+  console.log(`  ${rule()}`);
+  if (subtitle) console.log(`  ${c.dim(subtitle)}`);
+  console.log("");
+}
 
 function parseArgs(argv) {
-  const args = { _: [], yes: false, json: false, host: DEFAULT_HOST, port: DEFAULT_PORT, help: false };
+  const args = {
+    _: [],
+    yes: false,
+    json: false,
+    host: DEFAULT_HOST,
+    port: DEFAULT_PORT,
+    help: false,
+    browser: false,
+    pat: false,
+    token: "",
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "-y" || a === "--yes" || a === "--non-interactive") args.yes = true;
     else if (a === "--json") args.json = true;
     else if (a === "-h" || a === "--help") args.help = true;
     else if (a === "-v" || a === "--version") args.version = true;
+    else if (a === "--browser" || a === "--oauth") args.browser = true;
+    else if (a === "--pat") args.pat = true;
+    else if (a === "--token") args.token = argv[++i] || "";
+    else if (a.startsWith("--token=")) args.token = a.slice(8);
     else if (a === "--host") args.host = argv[++i] || DEFAULT_HOST;
     else if (a === "--port") args.port = Number(argv[++i] || DEFAULT_PORT);
     else if (a.startsWith("--host=")) args.host = a.slice(7);
@@ -57,6 +87,7 @@ function parseArgs(argv) {
     else if (!a.startsWith("-")) args._.push(a);
   }
   if (process.env.QODER_CN_YES === "1") args.yes = true;
+  if (args.token) args.pat = true;
   return args;
 }
 
@@ -87,59 +118,110 @@ function endpoint(cfg = loadConfig()) {
 }
 
 function printHelp() {
-  console.log(`
-${c.bold("qoder-cn-infer")} ${c.dim(VERSION)} — Qoder CN quota as a local OpenAI API
-${c.dim("Not the official Qoder CLI (that is qoderclicn / qodercn).")}
-
-${c.bold("Usage:")}
-  qoder-cn-infer [OPTIONS] [COMMAND]
-
-${c.bold("Commands:")}
-  ${c.cyan("setup")}      Install prereqs, check login, start the API, wire clients
-  ${c.cyan("doctor")}     Check Node, Qoder login, port, and health
-  ${c.cyan("login")}      Sign in with qoderclicn (opens a browser)
-  ${c.cyan("start")}      Start the local API
-  ${c.cyan("stop")}       Stop the local API
-  ${c.cyan("status")}     Show running state and the endpoint
-  ${c.cyan("models")}     List models
-  ${c.cyan("wire")}       Write Hermes / OpenCode provider config
-  ${c.cyan("uninstall")}  Remove the user service and PATH shim
-  ${c.cyan("help")}       Show this help
-  ${c.cyan("version")}    Print version
-
-${c.bold("Options:")}
-  -y, --yes          Non-interactive (for agents / CI)
-      --json         Machine-readable output
-      --host <addr>  Bind address (default 127.0.0.1)
-      --port <n>     Port (default 8787)
-  -h, --help
-
-${c.bold("Human walkthrough:")}
-  1. ${c.cyan("qoder-cn-infer setup")}
-  2. If it asks you to log in, finish the browser page, then press Enter
-  3. Copy the Base URL it prints into Hermes / OpenCode
-
-${c.bold("Agent / non-interactive:")}
-  qoder-cn-infer setup --yes
-  # or:  ./scripts/install.sh --yes
-
-Only login cannot be automated without a Qoder account.
-`.trimEnd());
+  const cmd = (name, desc) => `  ${c.mag(name.padEnd(12))} ${c.dim(desc)}`;
+  banner("Local OpenAI API for your Qoder CN quota");
+  console.log(`  ${c.dim("Not the official CLI")} ${c.fg("qoderclicn")} ${c.dim("/")} ${c.fg("qodercn")}`);
+  console.log("");
+  console.log(`  ${c.bold("Usage")}`);
+  console.log(`    ${c.fg("qoder-cn-infer")} ${c.dim("[options]")} ${c.mag("<command>")}`);
+  console.log("");
+  console.log(`  ${c.bold("Commands")}`);
+  console.log(cmd("setup", "Install, sign in, start, wire clients"));
+  console.log(cmd("doctor", "Check Node, login, port, health"));
+  console.log(cmd("login", "Sign in — browser or PAT"));
+  console.log(cmd("logout", "Forget a stored PAT (CLI login kept)"));
+  console.log(cmd("start", "Start the local API"));
+  console.log(cmd("stop", "Stop the local API"));
+  console.log(cmd("status", "Show endpoint and login"));
+  console.log(cmd("models", "List models"));
+  console.log(cmd("wire", "Write Hermes / OpenCode config"));
+  console.log(cmd("uninstall", "Remove service and PATH shim"));
+  console.log("");
+  console.log(`  ${c.bold("Login")}`);
+  console.log(`    ${c.mag("--browser")}              ${c.dim("qoderclicn login in the browser")}`);
+  console.log(`    ${c.mag("--pat")}                  ${c.dim("paste / store a personal access token")}`);
+  console.log(`    ${c.mag("--token")} ${c.dim("<pt-…>")}         ${c.dim("non-interactive PAT")}`);
+  console.log("");
+  console.log(`  ${c.bold("Options")}`);
+  console.log(`    ${c.mag("-y, --yes")}              ${c.dim("no prompts (agents)")}`);
+  console.log(`    ${c.mag("--json")}                 ${c.dim("machine-readable")}`);
+  console.log(`    ${c.mag("--host --port")}          ${c.dim("bind address (default 127.0.0.1:8787)")}`);
+  console.log("");
+  console.log(`  ${c.bold("Walkthrough")}`);
+  console.log(`    1  ${c.fg("qoder-cn-infer setup")}`);
+  console.log(`    2  ${c.dim("Choose browser or PAT when asked")}`);
+  console.log(`    3  ${c.dim("Point Hermes at")} ${c.cyan("http://127.0.0.1:8787/v1")}`);
+  console.log("");
 }
 
 function jsonOut(obj) {
   console.log(JSON.stringify(obj));
 }
 
+function storedPat() {
+  const env = (process.env.QODERCN_PERSONAL_ACCESS_TOKEN || process.env.QODER_PAT || "").trim();
+  if (env) return env;
+  try {
+    return fs.readFileSync(PAT_FILE, "utf8").trim();
+  } catch {
+    return "";
+  }
+}
+
+function savePat(token) {
+  fs.mkdirSync(CONFIG_DIR, { recursive: true });
+  fs.writeFileSync(PAT_FILE, token.trim() + "\n", { mode: 0o600 });
+  try {
+    fs.chmodSync(PAT_FILE, 0o600);
+  } catch {
+    /* ignore */
+  }
+}
+
 function hasLogin() {
+  if (storedPat()) return true;
   const user = path.join(os.homedir(), ".qoder-cn", ".auth", "user");
   const mid = path.join(os.homedir(), ".qoder-cn", ".auth", "machine_id");
-  if (process.env.QODERCN_PERSONAL_ACCESS_TOKEN || process.env.QODER_PAT) return true;
   try {
     return fs.statSync(user).size > 8 && fs.statSync(mid).size > 4;
   } catch {
     return false;
   }
+}
+
+function readLine(hidden = false) {
+  return new Promise((resolve) => {
+    const stdin = process.stdin;
+    if (!stdin.isTTY) {
+      let buf = "";
+      stdin.setEncoding("utf8");
+      stdin.on("data", (d) => (buf += d));
+      stdin.on("end", () => resolve(buf.trim()));
+      return;
+    }
+    if (hidden && stdin.setRawMode) stdin.setRawMode(true);
+    stdin.resume();
+    stdin.setEncoding("utf8");
+    let buf = "";
+    const onData = (s) => {
+      if (s === "\u0003") process.exit(130);
+      if (s === "\n" || s === "\r") {
+        stdin.removeListener("data", onData);
+        if (hidden && stdin.setRawMode) stdin.setRawMode(false);
+        stdin.pause();
+        process.stdout.write("\n");
+        resolve(buf.trim());
+        return;
+      }
+      if (s === "\u007f" || s === "\b") {
+        buf = buf.slice(0, -1);
+        return;
+      }
+      buf += s;
+      if (!hidden) process.stdout.write(s);
+    };
+    stdin.on("data", onData);
+  });
 }
 
 function httpGet(url, timeout = 4000) {
@@ -373,8 +455,12 @@ async function cmdDoctor(args) {
     jsonOut({ ok: checks.every((x) => x.ok), checks, endpoint: endpoint(cfg) });
     return checks.every((x) => x.ok) ? 0 : 1;
   }
-  console.log(c.bold("qoder-cn-infer doctor"));
-  for (const x of checks) console.log(x.ok ? c.ok(`${x.id}  ${x.detail}`) : c.bad(`${x.id}  ${x.detail}`));
+  banner("doctor");
+  for (const x of checks) {
+    const line = `${x.id.padEnd(12)} ${c.dim(x.detail)}`;
+    console.log("  " + (x.ok ? c.ok(line) : c.bad(line)));
+  }
+  console.log("");
   return checks.every((x) => x.ok) ? 0 : 1;
 }
 
@@ -426,22 +512,99 @@ async function cmdStop(args) {
   return 0;
 }
 
-function cmdLogin(args) {
+async function chooseLoginMethod(args) {
+  if (args.pat || args.token) return "pat";
+  if (args.browser) return "browser";
+  if (args.yes) {
+    if (storedPat() || process.env.QODERCN_PERSONAL_ACCESS_TOKEN || process.env.QODER_PAT) return "pat";
+    return "browser";
+  }
+  if (!args.json) {
+    console.log(`  ${c.bold("How do you want to sign in?")}`);
+    console.log("");
+    console.log(`    ${c.mag("1")}  ${c.fg("Browser")}   ${c.dim("qoderclicn login  ·  recommended")}`);
+    console.log(`    ${c.mag("2")}  ${c.fg("PAT")}       ${c.dim("token from  qoder.cn/account/integrations")}`);
+    console.log("");
+    process.stdout.write(`  ${c.dim("Choose")} ${c.fg("[1/2]")} ${c.dim("· default 1")}  `);
+  }
+  const ans = (await readLine(false)) || "1";
+  return ans.trim().startsWith("2") || /^p/i.test(ans.trim()) ? "pat" : "browser";
+}
+
+function loginBrowser(args) {
   const bin = which("qoderclicn") || which("qodercn");
   if (!bin) {
     if (args.json) jsonOut({ ok: false, error: "qoderclicn_missing" });
-    else console.log(c.bad("qoderclicn not installed. run  qoder-cn-infer setup"));
+    else console.log("  " + c.bad("qoderclicn not installed — run  qoder-cn-infer setup"));
     return 1;
   }
   if (!args.json) {
-    console.log(c.cyan("Opening Qoder CN login in your browser…"));
-    console.log(c.dim("If nothing opens, run:  qoderclicn login"));
+    console.log("  " + c.dim("Opening the Qoder CN browser sign-in…"));
+    console.log("  " + c.dim("If nothing opens:  qoderclicn login"));
+    console.log("");
   }
   const r = spawnSync(bin, ["login"], { stdio: args.json ? "pipe" : "inherit" });
   const ok = hasLogin();
-  if (args.json) jsonOut({ ok, status: r.status });
-  else console.log(ok ? c.ok("signed in") : c.skip("login not detected yet — finish the browser page, then qoder-cn-infer doctor"));
+  if (args.json) jsonOut({ ok, method: "browser", status: r.status });
+  else console.log("  " + (ok ? c.ok("signed in with browser") : c.skip("not detected yet — finish the page, then  qoder-cn-infer doctor")));
   return ok ? 0 : 2;
+}
+
+async function loginPat(args) {
+  let token = (args.token || storedPat()).trim();
+  if (!token && !args.yes) {
+    console.log("  " + c.dim("Create a token at"));
+    console.log("  " + c.cyan("https://qoder.cn/account/integrations"));
+    console.log("");
+    process.stdout.write("  " + c.dim("Paste PAT") + "  ");
+    token = await readLine(true);
+  }
+  if (!token) {
+    if (args.json) jsonOut({ ok: false, error: "pat_missing" });
+    else console.log("  " + c.bad("no token. set QODERCN_PERSONAL_ACCESS_TOKEN or pass --token"));
+    return 2;
+  }
+  if (!/^pt-/.test(token) && token.length < 20) {
+    if (args.json) jsonOut({ ok: false, error: "pat_invalid" });
+    else console.log("  " + c.bad("that does not look like a Qoder PAT (usually starts with pt-)"));
+    return 1;
+  }
+  savePat(token);
+  process.env.QODERCN_PERSONAL_ACCESS_TOKEN = token;
+  if (args.json) jsonOut({ ok: true, method: "pat" });
+  else console.log("  " + c.ok("PAT stored in  ~/.config/qoder-cn-infer/pat  (mode 600)"));
+  return 0;
+}
+
+async function cmdLogin(args) {
+  if (!args.json) banner("sign in");
+  const method = await chooseLoginMethod(args);
+  if (method === "pat") return loginPat(args);
+  if (!which("qoderclicn") && !which("qodercn")) {
+    const cli = ensureQoderCli(args.yes);
+    if (!cli.ok) {
+      if (args.json) jsonOut({ ok: false, error: "qoderclicn", detail: cli.error });
+      else console.log("  " + c.bad(cli.error));
+      return 1;
+    }
+  }
+  return loginBrowser(args);
+}
+
+function cmdLogout(args) {
+  try {
+    fs.unlinkSync(PAT_FILE);
+  } catch {
+    /* ignore */
+  }
+  if (args.json) jsonOut({ ok: true });
+  else {
+    banner("logout");
+    console.log("  " + c.ok("stored PAT removed"));
+    console.log("  " + c.dim("qoderclicn browser login was not touched"));
+    console.log("");
+  }
+  return 0;
 }
 
 async function cmdModels(args) {
@@ -484,13 +647,15 @@ async function cmdSetup(args) {
   const report = { steps: [] };
   const step = (id, ok, detail) => {
     report.steps.push({ id, ok, detail });
-    if (!args.json) console.log(ok ? c.ok(`${id.padEnd(14)} ${detail}`) : c.bad(`${id.padEnd(14)} ${detail}`));
+    if (!args.json) {
+      const line = `${id.padEnd(12)} ${c.dim(detail)}`;
+      console.log("  " + (ok ? c.ok(line) : c.bad(line)));
+    }
   };
 
   if (!args.json) {
-    console.log("");
-    console.log(c.bold("qoder-cn-infer setup"));
-    console.log(c.dim("Local OpenAI API for your Qoder CN quota. Login is the only manual step."));
+    banner("setup");
+    console.log(`  ${c.dim("Prereqs are automatic. You only choose how to sign in.")}`);
     console.log("");
   }
 
@@ -501,11 +666,16 @@ async function cmdSetup(args) {
     return 1;
   }
 
-  const cli = ensureQoderCli(args.yes);
-  step("qoderclicn", cli.ok, cli.ok ? cli.path + (cli.installed ? " (installed)" : "") : cli.error);
-  if (!cli.ok) {
-    if (args.json) jsonOut({ ok: false, error: "qoderclicn", report });
-    return 1;
+  const skipOfficialCli = Boolean(args.pat || args.token || storedPat());
+  if (skipOfficialCli) {
+    step("qoderclicn", true, "skipped · PAT login");
+  } else {
+    const cli = ensureQoderCli(args.yes);
+    step("qoderclicn", cli.ok, cli.ok ? cli.path + (cli.installed ? " (installed)" : "") : cli.error);
+    if (!cli.ok) {
+      if (args.json) jsonOut({ ok: false, error: "qoderclicn", report });
+      return 1;
+    }
   }
 
   linkCli();
@@ -513,27 +683,31 @@ async function cmdSetup(args) {
 
   if (!hasLogin()) {
     step("login", false, "not signed in");
-    if (args.yes) {
-      if (args.json) jsonOut({ ok: false, error: "not_logged_in", hint: "run qoderclicn login or set QODERCN_PERSONAL_ACCESS_TOKEN", report });
-      else {
+    if (args.yes && !args.pat && !args.token && !args.browser) {
+      if (args.json) {
+        jsonOut({
+          ok: false,
+          error: "not_logged_in",
+          hint: "qoder-cn-infer login --browser  or  --pat --token pt-…  or  QODERCN_PERSONAL_ACCESS_TOKEN",
+          report,
+        });
+      } else {
         console.log("");
-        console.log(c.yellow("Stop: Qoder login is required (cannot be skipped)."));
-        console.log("  1. Run  " + c.cyan("qoderclicn login"));
-        console.log("  2. Sign in in the browser");
-        console.log("  3. Run  " + c.cyan("qoder-cn-infer setup --yes") + "  again");
+        console.log("  " + c.yellow("Sign in is required."));
+        console.log("  " + c.dim("Browser") + "   " + c.fg("qoder-cn-infer login --browser"));
+        console.log("  " + c.dim("PAT") + "       " + c.fg("qoder-cn-infer login --pat --token pt-…"));
+        console.log("  " + c.dim("Then") + "      " + c.fg("qoder-cn-infer setup --yes"));
       }
       return 2;
     }
     console.log("");
-    console.log("A browser window should open for Qoder CN.");
-    cmdLogin({ json: false, yes: false });
-    waitEnter(false, "Press Enter after you finish signing in… ");
-    if (!hasLogin()) {
+    const loginCode = await cmdLogin(args);
+    if (loginCode !== 0 && !hasLogin()) {
       step("login", false, "still missing");
       return 2;
     }
   }
-  step("login", true, "signed in");
+  step("login", true, storedPat() ? "PAT" : "browser");
 
   const code = await cmdStart({ ...args, json: false });
   const healthy = await isHealthy(cfg);
@@ -559,14 +733,14 @@ async function cmdSetup(args) {
     });
   } else {
     console.log("");
-    console.log(c.bold("Done. Use this in any OpenAI-compatible client:"));
+    console.log(`  ${c.bold("Done")}`);
+    console.log(`  ${rule()}`);
+    console.log(`  ${c.dim("Base URL")}   ${c.cyan(endpoint(cfg))}`);
+    console.log(`  ${c.dim("API key")}    ${c.fg("not-used")}`);
+    console.log(`  ${c.dim("Model")}      ${c.fg("qwen3.8-max")}  ${c.dim("· qwen3.8-flash · efficient")}`);
     console.log("");
-    console.log(`  Base URL   ${c.cyan(endpoint(cfg))}`);
-    console.log(`  API key    ${c.cyan("not-used")}`);
-    console.log(`  Model      ${c.cyan("qwen3.8-max")}   ${c.dim("(or qwen3.8-flash / efficient)")}`);
+    console.log(`  ${c.dim("Hermes")}     hermes model  →  qoder-cn-infer / qwen3.8-max`);
     console.log("");
-    console.log(c.dim("Hermes: hermes model  →  qoder-cn-infer / qwen3.8-max"));
-    console.log(c.dim("Keep it running: the user service restarts it automatically."));
   }
   return 0;
 }
@@ -610,6 +784,7 @@ async function main() {
     setup: cmdSetup,
     doctor: cmdDoctor,
     login: cmdLogin,
+    logout: cmdLogout,
     start: cmdStart,
     stop: cmdStop,
     status: cmdStatus,
