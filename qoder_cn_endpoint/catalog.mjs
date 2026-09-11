@@ -188,24 +188,6 @@ export function openaiListFromGateway(gateway) {
       context_length: row.max_input_tokens,
       qoder_key: row.key,
     });
-    // Also accept the CN CLI display id (Qwen3.8-Max) if it differs from the slug.
-    if (row.display_name && row.display_name !== id) {
-      data.push({
-        id: row.display_name,
-        object: "model",
-        created: 0,
-        owned_by: "qoder-cn",
-        name,
-        display_name: row.display_name,
-        price_factor: row.price_factor,
-        rate: formatRate(row.price_factor),
-        routing: Boolean(row.routing),
-        reasoning: row.is_reasoning,
-        vision: row.is_vl,
-        context_length: row.max_input_tokens,
-        qoder_key: row.key,
-      });
-    }
   }
   return { object: "list", data };
 }

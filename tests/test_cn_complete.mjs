@@ -135,7 +135,9 @@ test("GET /v1/models catalog includes qwen3.8-max", () => {
   const list = openaiModelList();
   const ids = list.data.map((m) => m.id);
   assert.ok(ids.includes("qwen3.8-max"));
-  assert.ok(ids.includes("Qwen3.8-Max"));
+  assert.equal(ids.includes("Qwen3.8-Max"), false);
+  const keys = list.data.map((m) => m.qoder_key);
+  assert.equal(keys.length, new Set(keys).size, "duplicate qoder_key in /v1/models");
 });
 
 test("catalog maps live chat rows to slugs, rates, and Auto routing", () => {
@@ -154,7 +156,8 @@ test("catalog maps live chat rows to slugs, rates, and Auto routing", () => {
   assert.match(byId.auto.name, /routing/);
   assert.equal(byId["qwen3.8-flash"].rate, "0.1x");
   assert.equal(byId["qwen3.8-flash"].price_factor, 0.1);
-  assert.equal(byId["Qwen3.8-Flash"].qoder_key, "qfmodel");
+  assert.equal(byId["qwen3.8-flash"].qoder_key, "qfmodel");
+  assert.equal(byId["Qwen3.8-Flash"], undefined);
   assert.equal(catalogResolve("qwen3.8-flash", gateway.chat), "qfmodel");
   assert.equal(catalogResolve("DeepSeek-V4-Pro", gateway.chat), "dmodel");
   assert.match(displayLabel(gateway.chat[1]), /0\.1x/);
