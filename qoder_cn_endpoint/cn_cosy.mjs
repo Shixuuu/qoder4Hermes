@@ -164,7 +164,7 @@ export function defaultHttpsRequest(method, urlStr, { headers, body, timeout = 1
 }
 
 /** Streaming HTTPS: resolve { status, lines() } so callers can flush SSE as it arrives. */
-export function defaultHttpsStream(method, urlStr, { headers, body, timeout = 180000 } = {}) {
+export function defaultHttpsStream(method, urlStr, { headers, body, timeout = 600000 } = {}) {
   return new Promise((resolve, reject) => {
     const u = new URL(urlStr);
     const req = https.request(

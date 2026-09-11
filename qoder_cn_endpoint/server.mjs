@@ -161,6 +161,11 @@ const isMain =
   path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 
 if (isMain) {
+  // Hermes agent loops (tools + vision) can idle longer than Node's 5m default.
+  server.requestTimeout = 0;
+  server.headersTimeout = 0;
+  server.timeout = 0;
+  server.keepAliveTimeout = 120000;
   server.listen(port, host, () => {
     console.log(`qoder-cn inference facade http://${host}:${port}/v1`);
   });

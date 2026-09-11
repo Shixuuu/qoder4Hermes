@@ -62,6 +62,27 @@ export function normalizeContent(content) {
   return String(content);
 }
 
+export function extractImageParts(messages) {
+  const images = [];
+  for (const m of messages || []) {
+    const c = m?.content;
+    if (!Array.isArray(c)) continue;
+    for (const part of c) {
+      if (!part || typeof part !== "object") continue;
+      const url =
+        part.image_url?.url ||
+        part.image_url ||
+        (part.type === "image_url" && part.url) ||
+        part.image ||
+        "";
+      if (part.type === "image_url" || part.type === "image" || url) {
+        if (url) images.push({ type: "image_url", image_url: { url: String(url) } });
+      }
+    }
+  }
+  return images;
+}
+
 /** Fold client messages into the CN chat_context prompt so system text is visible to the model. */
 export function messagesToPrompt(messages) {
   const parts = [];
@@ -160,6 +181,7 @@ function buildChatBody({
     .find((m) => m.role === "user");
   const userText = normalizeContent(lastUser?.content) || prompt;
   const nid = crypto.randomUUID();
+  const images = extractImageParts(messages);
   const body = {
     request_id: nid,
     request_set_id: crypto.randomUUID(),
@@ -193,6 +215,15 @@ function buildChatBody({
       begin_at: Date.now(),
     },
   };
+  if (images.length) {
+    body.model_config.is_vl = true;
+    body.chat_context.extra.images = images;
+    body.chat_context.extra.originalContent = {
+      type: "multimodal",
+      text: prompt,
+      images,
+    };
+  }
   return applyClientOptions(body, { tools, tool_choice, reasoning_effort, extra });
 }
 
@@ -332,7 +363,7 @@ export async function* streamOpenAiSse({
   const upstream = await streamFn("POST", CHAT_URL, {
     headers,
     body,
-    timeout: 180000,
+    timeout: 600000,
   });
   if (upstream.status !== 200) {
     const bits = [];

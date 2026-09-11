@@ -1,0 +1,16 @@
+[Unit]
+Description=Qoder CN OpenAI-compatible inference facade
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/shixu/qoder-cn-custom-endpoint
+Environment=QODER_CN_INFER_HOST=127.0.0.1
+Environment=QODER_CN_INFER_PORT=8787
+ExecStart=/usr/bin/node /home/shixu/qoder-cn-custom-endpoint/qoder_cn_endpoint/server.mjs
+Restart=always
+RestartSec=2
+TimeoutStopSec=10
+
+[Install]
+WantedBy=default.target

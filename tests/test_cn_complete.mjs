@@ -514,3 +514,34 @@ test("forwards Hermes tool catalog, reasoning, and tool-result turns", async () 
   assert.match(decoded, /call_1/);
   assert.match(decoded, /is_reasoning":true/);
 });
+
+test("extractImageParts and VL flag for native image messages", async () => {
+  const captured = [];
+  async function fakeHttps(method, url, opts) {
+    captured.push(opts?.body || "");
+    const inner = JSON.stringify({
+      choices: [{ delta: { content: "I see a cat" }, index: 0 }],
+    });
+    return {
+      status: 200,
+      body: `data:${JSON.stringify({ body: inner, statusCodeValue: 200 })}\n`,
+    };
+  }
+  await completeChat({
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "what is this" },
+          { type: "image_url", image_url: { url: "data:image/png;base64,aaa" } },
+        ],
+      },
+    ],
+    model: "deepseek-flash",
+    sess: fakeSess(),
+    httpsRequest: fakeHttps,
+  });
+  const decoded = qoderDecode(captured[0]).toString("utf8");
+  assert.match(decoded, /data:image\/png;base64,aaa/);
+  assert.match(decoded, /"is_vl":true/);
+});
