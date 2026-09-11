@@ -1,41 +1,108 @@
-# Qoder CN model inference inside Hermes / OpenCode (not the Qoder CLI harness)
+# qoder-cn-infer
 
-Qoder CN does **not** publish a public OpenAI-compatible inference API (`/v1/chat/completions`) for bundled models. There is no supported `https://api.qoder.com.cn/v1/chat/completions`. Official **自定义模型 / custom models** is BYOK **into** Qoder (the **opposite direction**). **Cloud Agents** at `https://api.qoder.com.cn/api/v1/cloud` is a hosted agent sandbox, not raw completions.
+Use **your Qoder CN quota** from Hermes, OpenCode, or any OpenAI-compatible client.
 
-This repo exposes a **local OpenAI-compatible HTTP** facade that calls the **same CN model transport `qoderclicn` uses internally**, **without spawning** `qoderclicn` / `qodercn` / `qodercli`. Hermes or OpenCode is the only agent harness: they send `messages` (including `system`); this process does one model turn and returns assistant text. It does not run Qoder Read/Bash/agent tools.
+The Qoder CLI stays a **login wallet**. Hermes / OpenCode stay the **agent**. This repo is a small local API in between.
 
-This is **unofficial** and unsupported.
+Unofficial. Not affiliated with Qoder / Alibaba.
 
-## What the CLI actually calls (CN)
+---
 
-From the installed `qoderclicn` 1.1.48 binary and a live login:
+## Human setup (copy this)
 
-| Step | URL |
-| --- | --- |
-| PAT → jobToken | `POST https://openapi.qoder.com.cn/api/v1/jobToken/exchange` |
-| Userinfo | `GET https://openapi.qoder.com.cn/api/v1/userinfo` |
-| Model catalog | `GET https://gateway.qoder.com.cn/algo/api/v2/model/list?Encode=1` |
-| Completion SSE | `POST https://gateway.qoder.com.cn/algo/api/v2/service/pro/sse/agent_chat_generation` |
+You need a Qoder CN account. Everything else is automatic.
 
-Global `https://api2-v2.qoder.sh/model/v1/chat/completions` **401s** CN jobTokens. Use the **CN** stack (`qoder.com.cn` / `qoderclicn` / `QODERCN_PERSONAL_ACCESS_TOKEN` or `QODER_PAT` on `api.qoder.com.cn` / `openapi.qoder.com.cn`), not `qoder.com` / `qodercli` / `api.qoder.com`.
-
-CLI login file `~/.qoder-cn/.auth/user` (AES-128-CBC, `machine_id[:16]`) already contains `pt-` and `jt-` after `qoderclicn login`.
-
-## Run the facade
-
-The facade serves `GET /v1/models` and `POST /v1/chat/completions`. Hermes uses streaming: `stream` not `false` returns OpenAI SSE (`chat.completion.chunk` + `finish_reason` + `data: [DONE]`). `stream: false` still returns one JSON object.
+### 1. Open a terminal in this folder
 
 ```bash
-node qoder_cn_endpoint/server.mjs
-# GET  http://127.0.0.1:8787/v1/models
-# POST http://127.0.0.1:8787/v1/chat/completions
+cd qoder-cn-infer
+chmod +x scripts/install.sh bin/qoder-cn.mjs
+./scripts/install.sh
 ```
 
-Auth: existing `qoderclicn` login, or `export QODERCN_PERSONAL_ACCESS_TOKEN=pt-...` / `QODER_PAT`.
+### 2. Watch the checklist
 
-Do **not** put the Qoder PAT in Hermes/OpenCode. Client API key is a placeholder (`not-used`).
+You should see green ticks:
 
-## Hermes Agent
+```
+✓ node           v22.x
+✓ qoderclicn     /usr/bin/qoderclicn
+✓ cli            ~/.local/bin/qoder-cn
+✓ login          signed in
+✓ api            http://127.0.0.1:8787/v1
+✓ clients        Hermes + OpenCode
+```
+
+If **login** is red, a browser opens. Sign in, go back to the terminal, press **Enter**.
+
+### 3. Use it
+
+| Field | Value |
+| --- | --- |
+| Base URL | `http://127.0.0.1:8787/v1` |
+| API key | `not-used` |
+| Model | `qwen3.8-max` (or `qwen3.8-flash`, `efficient`) |
+
+Hermes: `hermes model` → **qoder-cn** / **qwen3.8-max**  
+OpenCode: `--model qoder-cn/qwen3.8-max`
+
+That’s it. Leave the computer on; the API restarts itself.
+
+---
+
+## Commands (same idea as `grok`)
+
+```
+qoder-cn setup      # first-time walkthrough
+qoder-cn doctor     # is anything broken?
+qoder-cn login      # browser sign-in
+qoder-cn start      # start the API
+qoder-cn stop
+qoder-cn status
+qoder-cn models
+qoder-cn wire       # rewrite Hermes / OpenCode config
+qoder-cn uninstall
+```
+
+`-y` / `--yes` = no questions (for agents). `--json` = machine output.
+
+---
+
+## Agent setup
+
+See [AGENTS.md](./AGENTS.md). Short version:
+
+```bash
+node bin/qoder-cn.mjs setup --yes
+```
+
+If it exits **2**, the operator must log in, then run the same command again.
+
+---
+
+## What this is / is not
+
+- **Is:** local `GET /v1/models` and `POST /v1/chat/completions` (and `/chat/completions`) using the CN account already on this machine.
+- **Is not:** Qoder’s official public inference API. Custom models inside Qoder IDE are the **opposite** direction (you bring keys *into* Qoder).
+- **Is not:** a nested Qoder coding agent. Tools run in Hermes/OpenCode.
+
+Paid Qoder CN plans work. Lite/Efficient are the 0x routing slots.
+
+---
+
+## License
+
+MIT. Unofficial.
+
+---
+
+## Notes (for tools & researchers)
+
+Qoder CN does **not** publish a public OpenAI-compatible inference API. There is no supported `https://api.qoder.com.cn/v1/chat/completions`. Official custom models is BYOK **into** Qoder (the **opposite direction**). Cloud Agents at `https://api.qoder.com.cn/api/v1/cloud` is a hosted sandbox, not raw completions.
+
+This repo is a **local OpenAI-compatible HTTP** facade for `GET /v1/models` and `POST /v1/chat/completions` **without spawning** `qoderclicn` / `qodercn` / `qodercli` as the agent. Auth is `qoderclicn` login, `QODERCN_PERSONAL_ACCESS_TOKEN`, or `QODER_PAT`. CN: `qoder.com.cn`, `qoderclicn`, `api.qoder.com.cn`, `gateway.qoder.com.cn`. Global: `qoder.com`, `qodercli`, `api.qoder.com`.
+
+Hermes:
 
 ```yaml
 model:
@@ -53,7 +120,7 @@ providers:
       Qwen3.8-Max: {}
 ```
 
-## OpenCode
+OpenCode:
 
 ```json
 {
@@ -70,9 +137,6 @@ providers:
       "models": {
         "qwen3.8-max": {
           "name": "Qwen3.8-Max"
-        },
-        "Qwen3.8-Max": {
-          "name": "Qwen3.8-Max (display id)"
         }
       }
     }
@@ -80,10 +144,3 @@ providers:
 }
 ```
 
-## Checks
-
-```bash
-python3 -m qoder_cn_endpoint
-python3 -m unittest discover -s tests -v
-node --test tests/test_cn_complete.mjs
-```

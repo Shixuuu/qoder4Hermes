@@ -4,10 +4,11 @@ After=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/shixu/qoder-cn-custom-endpoint
+WorkingDirectory=%h/.local/share/qoder-cn-infer
 Environment=QODER_CN_INFER_HOST=127.0.0.1
 Environment=QODER_CN_INFER_PORT=8787
-ExecStart=/usr/bin/node /home/shixu/qoder-cn-custom-endpoint/qoder_cn_endpoint/server.mjs
+Environment=PATH=%h/.local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/env node %h/.local/share/qoder-cn-infer/qoder_cn_endpoint/server.mjs
 Restart=always
 RestartSec=2
 TimeoutStopSec=10

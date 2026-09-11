@@ -1,0 +1,43 @@
+{
+  "name": "qoder-cn-infer",
+  "version": "1.0.0",
+  "description": "Use your Qoder CN quota from Hermes, OpenCode, or any OpenAI-compatible client — without the Qoder CLI harness.",
+  "type": "module",
+  "bin": {
+    "qoder-cn": "./bin/qoder-cn.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node qoder_cn_endpoint/server.mjs",
+    "setup": "node bin/qoder-cn.mjs setup",
+    "test": "node --test tests/test_cn_complete.mjs tests/test_cli.mjs"
+  },
+  "files": [
+    "bin",
+    "qoder_cn_endpoint",
+    "scripts",
+    "examples",
+    "AGENTS.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/retrilzzy/qoder-cn-infer.git"
+  },
+  "keywords": [
+    "qoder",
+    "qoder-cn",
+    "openai",
+    "hermes",
+    "opencode",
+    "inference"
+  ],
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/retrilzzy/qoder-cn-infer/issues"
+  },
+  "homepage": "https://github.com/retrilzzy/qoder-cn-infer#readme"
+}
