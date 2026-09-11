@@ -63,7 +63,7 @@ That’s it. Leave the computer on; the API restarts itself.
 
 ---
 
-## Commands (same idea as `grok`)
+## Commands
 
 The command is **`qoder-cn-infer`**, not `qodercn` / `qoderclicn` (those are the official Qoder CN CLI).
 
@@ -94,14 +94,6 @@ node bin/qoder-cn-infer.mjs setup --yes
 If it exits **2**, the operator must log in, then run the same command again.
 
 ---
-
-## What this is / is not
-
-- **Is:** local `GET /v1/models` and `POST /v1/chat/completions` (and `/chat/completions`) using the CN account already on this machine.
-- **Is not:** Qoder’s official public inference API. Custom models inside Qoder IDE are the **opposite** direction (you bring keys *into* Qoder).
-- **Is not:** a nested Qoder coding agent. Tools run in Hermes/OpenCode.
-
-Paid Qoder CN plans work. Lite/Efficient are the 0x routing slots.
 
 ---
 
