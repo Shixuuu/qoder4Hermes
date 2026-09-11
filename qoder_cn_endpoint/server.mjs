@@ -72,6 +72,8 @@ export async function handleChatCompletions(req, res, body, sess, deps = {}) {
       sess,
       tools: body.tools,
       tool_choice: body.tool_choice,
+      reasoning_effort: body.reasoning_effort,
+      extra: body.extra_body,
       httpsRequest: deps.httpsRequest,
       httpsStream: deps.httpsStream,
     });
@@ -94,6 +96,8 @@ export async function handleChatCompletions(req, res, body, sess, deps = {}) {
       sess,
       tools: body.tools,
       tool_choice: body.tool_choice,
+      reasoning_effort: body.reasoning_effort,
+      extra: body.extra_body,
       httpsRequest: deps.httpsRequest,
       httpsStream: deps.httpsStream,
     })) {

@@ -432,3 +432,85 @@ test("completeChat forwards client tools in the CN body", async () => {
   assert.match(decoded, /read_file/);
   assert.match(decoded, /"tools"/);
 });
+
+function fakeSess() {
+  return {
+    cosyKey: "k",
+    info: "aW5mbw==",
+    identity: {
+      uid: "u1",
+      name: "n",
+      user_type: "personal_standard",
+      security_oauth_token: "jt-x",
+      refresh_token: "jrt-x",
+      aid: "u1",
+    },
+    machineId: "m".repeat(36),
+    machineToken: "tok",
+    machineType: "t",
+  };
+}
+
+function okSse() {
+  const inner = JSON.stringify({
+    choices: [{ delta: { content: "ok" }, index: 0 }],
+  });
+  return `data:${JSON.stringify({ body: inner, statusCodeValue: 200 })}\n`;
+}
+
+test("forwards Hermes tool catalog, reasoning, and tool-result turns", async () => {
+  const captured = [];
+  async function fakeHttps(method, url, opts) {
+    captured.push(opts?.body || "");
+    return { status: 200, body: okSse() };
+  }
+  const tools = [
+    "terminal",
+    "read_file",
+    "write_file",
+    "skill_view",
+    "browser_exec",
+    "web_search",
+    "memory",
+    "delegate_task",
+    "execute_code",
+  ].map((name) => ({ type: "function", function: { name, parameters: { type: "object" } } }));
+  await completeChat({
+    messages: [
+      { role: "system", content: "You are Hermes Agent." },
+      { role: "user", content: "inspect the repo" },
+      {
+        role: "assistant",
+        content: "",
+        tool_calls: [
+          {
+            id: "call_1",
+            type: "function",
+            function: { name: "read_file", arguments: '{"path":"README.md"}' },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        tool_call_id: "call_1",
+        name: "read_file",
+        content: "# title",
+      },
+    ],
+    model: "qwen3.8-max",
+    sess: fakeSess(),
+    tools,
+    reasoning_effort: "medium",
+    httpsRequest: fakeHttps,
+  });
+  const decoded = qoderDecode(captured[0]).toString("utf8");
+  for (const name of ["terminal", "skill_view", "browser_exec", "delegate_task"]) {
+    assert.match(decoded, new RegExp(name));
+  }
+  assert.match(decoded, /HERMES TOOLS/);
+  assert.match(decoded, /reasoning_effort/);
+  assert.match(decoded, /medium/);
+  assert.match(decoded, /TOOL RESULT/);
+  assert.match(decoded, /call_1/);
+  assert.match(decoded, /is_reasoning":true/);
+});

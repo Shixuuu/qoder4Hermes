@@ -105,17 +105,55 @@ export function parseSseAssistantText(sseBody) {
 }
 
 function mapUpstreamMessage(m) {
-  const out = {
-    role: m.role,
-    content: normalizeContent(m.content),
-  };
+  const out = { role: m.role };
+  if (Array.isArray(m.content)) out.content = m.content;
+  else out.content = normalizeContent(m.content);
   if (m.tool_calls) out.tool_calls = m.tool_calls;
   if (m.tool_call_id) out.tool_call_id = m.tool_call_id;
   if (m.name) out.name = m.name;
   return out;
 }
 
-function buildChatBody({ messages, modelKey, userType, tools, tool_choice }) {
+function applyClientOptions(body, { tools, tool_choice, reasoning_effort, extra }) {
+  if (Array.isArray(tools) && tools.length) {
+    body.tools = tools;
+    body.tool_choice = tool_choice || "auto";
+    const names = tools
+      .map((t) => t?.function?.name || t?.name)
+      .filter(Boolean);
+    if (names.length) {
+      const listing = names.join(", ");
+      const note = `HERMES TOOLS (call these by exact name via tool_calls, never print XML): ${listing}`;
+      if (body.chat_context?.text?.text) {
+        body.chat_context.text.text = `${note}\n\n${body.chat_context.text.text}`;
+      }
+    }
+  }
+  if (reasoning_effort) {
+    const on = !["none", "off", "minimal"].includes(String(reasoning_effort).toLowerCase());
+    body.reasoning_effort = reasoning_effort;
+    body.model_config.is_reasoning = on;
+    if (body.chat_context?.extra?.modelConfig) {
+      body.chat_context.extra.modelConfig.is_reasoning = on;
+    }
+  }
+  if (extra && typeof extra === "object") {
+    for (const [k, v] of Object.entries(extra)) {
+      if (v !== undefined && body[k] === undefined) body[k] = v;
+    }
+  }
+  return body;
+}
+
+function buildChatBody({
+  messages,
+  modelKey,
+  userType,
+  tools,
+  tool_choice,
+  reasoning_effort,
+  extra,
+}) {
   const prompt = messagesToPrompt(messages);
   const lastUser = [...(messages || [])]
     .reverse()
@@ -155,11 +193,7 @@ function buildChatBody({ messages, modelKey, userType, tools, tool_choice }) {
       begin_at: Date.now(),
     },
   };
-  if (Array.isArray(tools) && tools.length) {
-    body.tools = tools;
-    body.tool_choice = tool_choice || "auto";
-  }
-  return body;
+  return applyClientOptions(body, { tools, tool_choice, reasoning_effort, extra });
 }
 
 export async function listRemoteModels(sess, httpsRequest = defaultHttpsRequest) {
@@ -230,7 +264,15 @@ function resolveStreamFn({ httpsStream, httpsRequest }) {
   return defaultHttpsStream;
 }
 
-function buildUpstreamPost({ messages, model, sess, tools, tool_choice }) {
+function buildUpstreamPost({
+  messages,
+  model,
+  sess,
+  tools,
+  tool_choice,
+  reasoning_effort,
+  extra,
+}) {
   const modelKey = resolveModelKey(model);
   const chatObj = buildChatBody({
     messages,
@@ -238,6 +280,8 @@ function buildUpstreamPost({ messages, model, sess, tools, tool_choice }) {
     userType: sess.identity.user_type,
     tools,
     tool_choice,
+    reasoning_effort,
+    extra,
   });
   const body = qoderEncode(JSON.stringify(chatObj));
   const date = String(Math.floor(Date.now() / 1000));
@@ -266,6 +310,8 @@ export async function* streamOpenAiSse({
   sess,
   tools,
   tool_choice,
+  reasoning_effort,
+  extra,
   httpsStream,
   httpsRequest,
 } = {}) {
@@ -279,6 +325,8 @@ export async function* streamOpenAiSse({
     sess,
     tools,
     tool_choice,
+    reasoning_effort,
+    extra,
   });
   const streamFn = resolveStreamFn({ httpsStream, httpsRequest });
   const upstream = await streamFn("POST", CHAT_URL, {
@@ -372,6 +420,8 @@ export async function completeChat(
     sess,
     tools,
     tool_choice,
+    reasoning_effort,
+    extra,
     httpsRequest = defaultHttpsRequest,
     httpsStream,
   } = {}
@@ -387,6 +437,8 @@ export async function completeChat(
     sess,
     tools,
     tool_choice,
+    reasoning_effort,
+    extra,
     httpsRequest,
     httpsStream,
   })) {
