@@ -58,8 +58,7 @@ qoder-cn-infer login --pat
 
 Hermes: `hermes model` → **qoder-cn-infer** / **qwen3.8-max**  
 OpenCode: `--model qoder-cn-infer/qwen3.8-max`
-
-That’s it. Leave the computer on; the API restarts itself.
+All models of Qoder are available besides the ones mentioned in the table
 
 ---
 
