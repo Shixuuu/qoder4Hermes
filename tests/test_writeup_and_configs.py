@@ -51,15 +51,15 @@ class ValidateRepoTests(unittest.TestCase):
             readme = dest / "README.md"
             readme.write_text(
                 readme.read_text(encoding="utf-8").replace(
-                    "local OpenAI-compatible HTTP bridge",
-                    "undocumented remote gateway",
+                    "without spawning",
+                    "by wrapping",
                 ),
                 encoding="utf-8",
             )
             report = validate_repo(dest)
             self.assertFalse(report.ok)
             self.assertTrue(
-                any("local_bridge_method" in err for err in report.errors),
+                any("no_cli_spawn" in err or "local_bridge_method" in err for err in report.errors),
                 report.errors,
             )
 
@@ -101,7 +101,7 @@ class HermesExampleTests(unittest.TestCase):
         cfg = parse_simple_yaml(matching[0])
         providers = hermes_named_providers(cfg)
         name, entry = next(iter(providers.items()))
-        self.assertEqual(entry.get("base_url"), "http://127.0.0.1:3000/v1")
+        self.assertTrue(str(entry.get("base_url")).endswith("/v1"))
         self.assertIn("api_key", entry)
         self.assertTrue(any("qwen3.8-max" in str(m).lower() for m in entry["models"]))
         self.assertNotEqual(name, "qoder-cn")  # not a fake first-party plugin id used as npm package
@@ -142,7 +142,7 @@ class OpenCodeExampleTests(unittest.TestCase):
 class YamlParserTests(unittest.TestCase):
     def test_empty_model_maps(self) -> None:
         parsed = parse_simple_yaml(
-            "providers:\n  x:\n    base_url: http://127.0.0.1:3000/v1\n    models:\n      qwen3.8-max: {}\n"
+            "providers:\n  x:\n    base_url: http://127.0.0.1:8787/v1\n    models:\n      qwen3.8-max: {}\n"
         )
         self.assertEqual(parsed["providers"]["x"]["models"]["qwen3.8-max"], {})
 

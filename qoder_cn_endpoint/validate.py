@@ -38,7 +38,15 @@ REQUIRED_CLAIMS = (
     ),
     (
         "local_bridge_method",
-        "local OpenAI-compatible HTTP bridge",
+        "local OpenAI-compatible HTTP",
+    ),
+    (
+        "no_cli_spawn",
+        "without spawning",
+    ),
+    (
+        "cn_gateway",
+        "gateway.qoder.com.cn",
     ),
     (
         "get_v1_models",
@@ -63,10 +71,7 @@ REQUIRED_CLAIMS = (
     ("cloud_agents_not_inference", "Cloud Agents"),
 )
 
-REQUIRED_BRIDGES = (
-    "lininn/qorder-proxy",
-    "caigee-cmd/cli2api",
-)
+REQUIRED_BRIDGES = ()
 
 
 @dataclass
@@ -254,10 +259,8 @@ def check_writeup_claims(text: str, report: Report) -> None:
     for name in REQUIRED_BRIDGES:
         if name not in text:
             report.fail(f"writeup must name existing CN-capable bridge {name}")
-    if "127.0.0.1:3000" not in text and "http://127.0.0.1:3000/v1" not in text:
-        report.fail("writeup must include lininn/qorder-proxy listen URL http://127.0.0.1:3000/v1")
-    if "127.0.0.1:3010" not in text:
-        report.fail("writeup must include caigee-cmd/cli2api listen URL on port 3010")
+    if "127.0.0.1:8787" not in haystack:
+        report.fail("writeup must include inference facade listen URL http://127.0.0.1:8787/v1")
     if INVENTED_OFFICIAL_CHAT in text:
         window = _sentence_window(text, INVENTED_OFFICIAL_CHAT)
         if not re.search(r"\b(not|does not|do not|no |never|isn't|is not)\b", window, re.I):
