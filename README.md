@@ -1,8 +1,7 @@
 # qoder-cn-infer
+Free AI inference tends to be locked behind vendor harnesses and clis. This project is a start to fix that . It lets you Use **your Qoder CN quota** from Hermes, OpenCode, or any OpenAI-compatible client.
 
-Use **your Qoder CN quota** from Hermes, OpenCode, or any OpenAI-compatible client.
-
-The Qoder CLI stays a **login wallet**. Hermes / OpenCode stay the **agent**. This repo is a small local API in between.
+The Qoder CLI stays a **inference provider** while Hermes / OpenCode or any third party harness stay the **actual agent environment**. This repo is a small local API in between which serves as a custom endpoint
 
 Unofficial. Not affiliated with Qoder / Alibaba.
 
