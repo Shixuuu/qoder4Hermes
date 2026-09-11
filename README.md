@@ -15,7 +15,7 @@ You need a Qoder CN account. Everything else is automatic.
 
 ```bash
 cd qoder-cn-infer
-chmod +x scripts/install.sh bin/qoder-cn.mjs
+chmod +x scripts/install.sh bin/qoder-cn-infer.mjs
 ./scripts/install.sh
 ```
 
@@ -26,7 +26,7 @@ You should see green ticks:
 ```
 ✓ node           v22.x
 ✓ qoderclicn     /usr/bin/qoderclicn
-✓ cli            ~/.local/bin/qoder-cn
+✓ cli            ~/.local/bin/qoder-cn-infer
 ✓ login          signed in
 ✓ api            http://127.0.0.1:8787/v1
 ✓ clients        Hermes + OpenCode
@@ -42,8 +42,8 @@ If **login** is red, a browser opens. Sign in, go back to the terminal, press **
 | API key | `not-used` |
 | Model | `qwen3.8-max` (or `qwen3.8-flash`, `efficient`) |
 
-Hermes: `hermes model` → **qoder-cn** / **qwen3.8-max**  
-OpenCode: `--model qoder-cn/qwen3.8-max`
+Hermes: `hermes model` → **qoder-cn-infer** / **qwen3.8-max**  
+OpenCode: `--model qoder-cn-infer/qwen3.8-max`
 
 That’s it. Leave the computer on; the API restarts itself.
 
@@ -51,16 +51,18 @@ That’s it. Leave the computer on; the API restarts itself.
 
 ## Commands (same idea as `grok`)
 
+The command is **`qoder-cn-infer`**, not `qodercn` / `qoderclicn` (those are the official Qoder CN CLI).
+
 ```
-qoder-cn setup      # first-time walkthrough
-qoder-cn doctor     # is anything broken?
-qoder-cn login      # browser sign-in
-qoder-cn start      # start the API
-qoder-cn stop
-qoder-cn status
-qoder-cn models
-qoder-cn wire       # rewrite Hermes / OpenCode config
-qoder-cn uninstall
+qoder-cn-infer setup      # first-time walkthrough
+qoder-cn-infer doctor     # is anything broken?
+qoder-cn-infer login      # browser sign-in (runs qoderclicn login)
+qoder-cn-infer start      # start the API
+qoder-cn-infer stop
+qoder-cn-infer status
+qoder-cn-infer models
+qoder-cn-infer wire       # rewrite Hermes / OpenCode config
+qoder-cn-infer uninstall
 ```
 
 `-y` / `--yes` = no questions (for agents). `--json` = machine output.
@@ -72,7 +74,7 @@ qoder-cn uninstall
 See [AGENTS.md](./AGENTS.md). Short version:
 
 ```bash
-node bin/qoder-cn.mjs setup --yes
+node bin/qoder-cn-infer.mjs setup --yes
 ```
 
 If it exits **2**, the operator must log in, then run the same command again.

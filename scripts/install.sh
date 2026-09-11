@@ -64,10 +64,10 @@ fi
 ensure_node
 export PATH="$HOME/.local/bin:$PATH"
 cd "$SRC"
-chmod +x bin/qoder-cn.mjs scripts/install.sh 2>/dev/null || true
+chmod +x bin/qoder-cn-infer.mjs scripts/install.sh 2>/dev/null || true
 
 if [[ "$YES" -eq 1 ]]; then
-  exec node bin/qoder-cn.mjs setup --yes
+  exec node bin/qoder-cn-infer.mjs setup --yes
 else
-  exec node bin/qoder-cn.mjs setup
+  exec node bin/qoder-cn-infer.mjs setup
 fi

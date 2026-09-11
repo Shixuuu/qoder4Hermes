@@ -4,14 +4,14 @@
   "description": "Use your Qoder CN quota from Hermes, OpenCode, or any OpenAI-compatible client — without the Qoder CLI harness.",
   "type": "module",
   "bin": {
-    "qoder-cn": "./bin/qoder-cn.mjs"
+    "qoder-cn-infer": "./bin/qoder-cn-infer.mjs"
   },
   "engines": {
     "node": ">=18"
   },
   "scripts": {
     "start": "node qoder_cn_endpoint/server.mjs",
-    "setup": "node bin/qoder-cn.mjs setup",
+    "setup": "node bin/qoder-cn-infer.mjs setup",
     "test": "node --test tests/test_cn_complete.mjs tests/test_cli.mjs"
   },
   "files": [

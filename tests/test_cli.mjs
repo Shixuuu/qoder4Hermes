@@ -3,10 +3,10 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { parseArgs } from "../bin/qoder-cn.mjs";
+import { parseArgs } from "../bin/qoder-cn-infer.mjs";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
-const CLI = path.join(ROOT, "bin", "qoder-cn.mjs");
+const CLI = path.join(ROOT, "bin", "qoder-cn-infer.mjs");
 
 test("parseArgs understands --yes and --json", () => {
   const a = parseArgs(["setup", "--yes", "--json", "--port", "8787"]);
@@ -16,10 +16,11 @@ test("parseArgs understands --yes and --json", () => {
   assert.equal(a._[0], "setup");
 });
 
-test("qoder-cn help and version exit 0", () => {
+test("qoder-cn-infer help and version exit 0", () => {
   const help = spawnSync(process.execPath, [CLI, "help"], { encoding: "utf8" });
   assert.equal(help.status, 0, help.stderr);
-  assert.match(help.stdout, /qoder-cn setup/);
+  assert.match(help.stdout, /qoder-cn-infer setup/);
+  assert.doesNotMatch(help.stdout, /^qoder-cn \[OPTIONS\]/m);
   assert.match(help.stdout, /--yes/);
   const ver = spawnSync(process.execPath, [CLI, "version", "--json"], { encoding: "utf8" });
   assert.equal(ver.status, 0, ver.stderr);

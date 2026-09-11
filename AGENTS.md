@@ -15,7 +15,7 @@ chmod +x scripts/install.sh
 Or, if `node` is already on PATH:
 
 ```bash
-node bin/qoder-cn.mjs setup --yes
+node bin/qoder-cn-infer.mjs setup --yes
 ```
 
 Exit codes:
@@ -31,16 +31,16 @@ Exit codes:
 Machine-readable:
 
 ```bash
-node bin/qoder-cn.mjs setup --yes --json
-node bin/qoder-cn.mjs doctor --json
-node bin/qoder-cn.mjs status --json
+node bin/qoder-cn-infer.mjs setup --yes --json
+node bin/qoder-cn-infer.mjs doctor --json
+node bin/qoder-cn-infer.mjs status --json
 ```
 
 ## What setup does automatically
 
 - Requires Node 18+ (already present, or `scripts/install.sh` unpacks official Node into `~/.local`)
 - `npm install -g @qodercn-ai/qoderclicn` if `qoderclicn` is missing
-- Symlinks `~/.local/bin/qoder-cn`
+- Symlinks `~/.local/bin/qoder-cn-infer` (not `qodercn` / `qoderclicn`)
 - Starts a user systemd service when available, otherwise a detached Node process
 - Writes Hermes (`~/.hermes/config.yaml`) and OpenCode (`~/.config/opencode/opencode.json`) provider blocks
 
@@ -58,4 +58,4 @@ API key:   not-used
 Model:     qwen3.8-max
 ```
 
-Hermes also accepts `http://127.0.0.1:8787` (no `/v1`). Keep `qoder-cn` running (`qoder-cn status`).
+Hermes also accepts `http://127.0.0.1:8787` (no `/v1`). Keep the API running (`qoder-cn-infer status`).
