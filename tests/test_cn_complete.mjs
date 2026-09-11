@@ -11,7 +11,7 @@ import {
   openaiModelList,
   streamOpenAiSse,
 } from "../qoder_cn_endpoint/cn_complete.mjs";
-import { wantStream, handleChatCompletions } from "../qoder_cn_endpoint/server.mjs";
+import { wantStream, handleChatCompletions, apiPath } from "../qoder_cn_endpoint/server.mjs";
 import {
   openaiListFromGateway,
   formatRate,
@@ -202,6 +202,13 @@ test("decryptCliUserFile is AES-128-CBC machine_id[:16]", async () => {
 test("model list URL is CN gateway not Cloud Agents", () => {
   assert.match(MODEL_LIST_URL, /gateway\.qoder\.com\.cn/);
   assert.equal(MODEL_LIST_URL.includes("api.qoder.com.cn/api/v1/cloud"), false);
+});
+
+test("apiPath accepts /chat/completions without /v1", () => {
+  assert.equal(apiPath("/chat/completions"), "/chat/completions");
+  assert.equal(apiPath("/v1/chat/completions"), "/chat/completions");
+  assert.equal(apiPath("/v1/models"), "/models");
+  assert.equal(apiPath("/models"), "/models");
 });
 
 test("wantStream defaults true (Hermes) and honors stream:false", () => {

@@ -112,19 +112,27 @@ export async function handleChatCompletions(req, res, body, sess, deps = {}) {
   res.end();
 }
 
+/** Hermes with base_url http://127.0.0.1:8787 posts /chat/completions (no /v1). */
+export function apiPath(urlPath) {
+  const raw = String(urlPath || "").split("?")[0];
+  if (raw === "/v1" || raw.startsWith("/v1/")) return raw.slice(3) || "/";
+  return raw;
+}
+
 const server = http.createServer(async (req, res) => {
   const url = req.url.split("?")[0];
+  const pathOnly = apiPath(url);
   try {
-    if (req.method === "GET" && (url === "/health" || url === "/v1/health")) {
+    if (req.method === "GET" && (pathOnly === "/health" || url === "/health")) {
       send(res, 200, { ok: true, harness: "client", transport: "qoder-cn-gateway" });
       return;
     }
-    if (req.method === "GET" && url === "/v1/models") {
+    if (req.method === "GET" && pathOnly === "/models") {
       const sess = await getSess();
       send(res, 200, await openaiModelListLive(sess));
       return;
     }
-    if (req.method === "POST" && url === "/v1/chat/completions") {
+    if (req.method === "POST" && pathOnly === "/chat/completions") {
       const body = await readJson(req);
       const sess = await getSess();
       await handleChatCompletions(req, res, body, sess);
