@@ -29,13 +29,31 @@ function getSess() {
   return sessPromise;
 }
 
+function messageHasImage(messages) {
+  for (const m of messages || []) {
+    const c = m?.content;
+    if (!Array.isArray(c)) continue;
+    for (const part of c) {
+      if (!part || typeof part !== "object") continue;
+      if (part.type === "image_url" || part.type === "image" || part.image_url) return true;
+    }
+  }
+  return false;
+}
+
 export function wantStream(body, req) {
   const s = body?.stream;
   if (s === false || s === "false" || s === 0) return false;
   if (s === true || s === "true" || s === 1) return true;
   const accept = String(req?.headers?.accept || "");
   if (accept.includes("text/event-stream")) return true;
-  // Hermes streams even when the dumped body omits `stream`.
+  if (accept.includes("application/json") && !accept.includes("event-stream")) return false;
+  const tools = body?.tools;
+  const hasTools = Array.isArray(tools) && tools.length > 0;
+  // Hermes main chat omits `stream` but sends the tool catalog and consumes SSE.
+  // vision_analyze omits `stream` too, has image parts and no tools, and parses JSON.
+  if (messageHasImage(body?.messages) && !hasTools) return false;
+  if (hasTools) return true;
   return true;
 }
 

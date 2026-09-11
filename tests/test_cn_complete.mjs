@@ -220,6 +220,30 @@ test("wantStream defaults true (Hermes) and honors stream:false", () => {
   assert.equal(wantStream({}, { headers: {} }), true);
   assert.equal(wantStream({ stream: true }, { headers: {} }), true);
   assert.equal(wantStream({ stream: false }, { headers: {} }), false);
+  assert.equal(
+    wantStream(
+      { tools: [{ type: "function", function: { name: "terminal" } }] },
+      { headers: {} }
+    ),
+    true
+  );
+  assert.equal(
+    wantStream(
+      {
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "what is this" },
+              { type: "image_url", image_url: { url: "data:image/png;base64,aaa" } },
+            ],
+          },
+        ],
+      },
+      { headers: {} }
+    ),
+    false
+  );
 });
 
 test("streamOpenAiSse emits content chunks, finish_reason, and [DONE]", async () => {
@@ -336,6 +360,56 @@ test("handleChatCompletions writes SSE for stream:true", async () => {
   assert.match(body, /"finish_reason":"stop"/);
   assert.match(body, /data: \[DONE\]/);
   assert.equal(res.ended, true);
+});
+
+test("handleChatCompletions returns JSON for vision_analyze-style image requests", async () => {
+  const inner = JSON.stringify({
+    choices: [{ delta: { content: "a tall UI screenshot", role: "assistant" }, index: 0 }],
+  });
+  async function httpsStream() {
+    return {
+      status: 200,
+      async *lines() {
+        yield `data:${JSON.stringify({ body: inner, statusCodeValue: 200 })}`;
+      },
+    };
+  }
+  let headers = null;
+  let ended = "";
+  const res = {
+    headersSent: false,
+    writeHead(status, h) {
+      this.status = status;
+      headers = h;
+      this.headersSent = true;
+    },
+    end(buf) {
+      ended = String(buf || "");
+    },
+  };
+  await handleChatCompletions(
+    { headers: { accept: "application/json" } },
+    res,
+    {
+      model: "deepseek-flash",
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "describe" },
+            { type: "image_url", image_url: { url: "data:image/png;base64,aaa" } },
+          ],
+        },
+      ],
+    },
+    fakeSess(),
+    { httpsStream }
+  );
+  const ctype = String(headers["content-type"] || headers["Content-Type"] || "");
+  assert.match(ctype, /application\/json/);
+  const obj = JSON.parse(ended);
+  assert.equal(obj.object, "chat.completion");
+  assert.match(obj.choices[0].message.content, /screenshot|tall|UI|a /i);
 });
 
 const SAMPLE_DSML = `<｜｜DSML｜｜ calls> <｜｜DSML｜｜ invoke name="terminal"> <｜｜DSML｜｜ parameter name="command" string="true">ls -la "/home/shixu/Downloads/KXP_Testing_Docs_revised"</｜｜DSML｜｜ parameter> </｜｜DSML｜｜ invoke> <｜｜DSML｜｜ invoke name="read_file"> <｜｜DSML｜｜ parameter name="path" string="true">/home/shixu/Downloads/KXP_Testing_Docs_revised/README.md</｜｜DSML｜｜ parameter> </｜｜DSML｜｜ invoke> </｜｜DSML｜｜ calls>`;
