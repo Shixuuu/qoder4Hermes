@@ -21,7 +21,7 @@ chmod +x scripts/install.sh bin/qoder-cn-infer.mjs
 
 ### 2. Walk through the wizard
 
-You'll get a boxed **Setup Wizard** (same idea as `hermes setup`): prerequisites, then a radio list for **Browser vs PAT**, then the local API, then whether to wire Hermes / OpenCode.
+ prerequisites, then a radio list for **Browser vs PAT**, then the local API, then whether to wire Hermes / OpenCode.
 
 ### 3. Watch the ticks
 
