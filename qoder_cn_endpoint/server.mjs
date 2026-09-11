@@ -10,7 +10,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   completeChat,
-  openaiModelList,
+  openaiModelListLive,
   buildSession,
   streamOpenAiSse,
 } from "./cn_complete.mjs";
@@ -120,7 +120,8 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     if (req.method === "GET" && url === "/v1/models") {
-      send(res, 200, openaiModelList());
+      const sess = await getSess();
+      send(res, 200, await openaiModelListLive(sess));
       return;
     }
     if (req.method === "POST" && url === "/v1/chat/completions") {

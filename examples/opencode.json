@@ -10,12 +10,20 @@
         "apiKey": "not-used"
       },
       "models": {
-        "qwen3.8-max": {
-          "name": "Qwen3.8-Max"
-        },
-        "Qwen3.8-Max": {
-          "name": "Qwen3.8-Max (display id)"
-        }
+        "auto": { "name": "Auto (routing · 0.5x credits)" },
+        "qwen3.8-max": { "name": "Qwen3.8-Max (0.5x credits)" },
+        "qwen3.8-flash": { "name": "Qwen3.8-Flash (0.1x credits)" },
+        "qwen3.7-max": { "name": "Qwen3.7-Max (0.5x credits)" },
+        "qwen3.7-plus": { "name": "Qwen3.7-Plus (0.1x credits)" },
+        "qwen3.7-flash": { "name": "Qwen3.7-Flash (0.1x credits)" },
+        "deepseek-v4-pro": { "name": "DeepSeek-V4-Pro (0.8x credits)" },
+        "deepseek-flash": { "name": "DeepSeek-Flash (0.2x credits)" },
+        "glm-5.3": { "name": "GLM-5.3 (0.6x credits)" },
+        "glm-5.3-flash": { "name": "GLM-5.3-Flash (0.1x credits)" },
+        "glm-5.2": { "name": "GLM-5.2 (0.6x credits)" },
+        "kimi-k3": { "name": "Kimi-K3 (0.8x credits)" },
+        "kimi-k2.7-code": { "name": "Kimi-K2.7-Code (0.3x credits)" },
+        "minimax-m2.7": { "name": "MiniMax-M2.7 (0.2x credits)" }
       }
     }
   }

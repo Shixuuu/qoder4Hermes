@@ -16,62 +16,29 @@ import {
   qoderDecode,
 } from "./cn_cosy.mjs";
 import { resolveIdentity } from "./cn_auth.mjs";
+import {
+  CHAT_FALLBACK,
+  openaiListFromGateway,
+  resolveModelKey as resolveFromCatalog,
+} from "./catalog.mjs";
 
-export const MODEL_MAP = {
-  auto: "auto",
-  "qwen3.8-max": "qmodel_38max",
-  "Qwen3.8-Max": "qmodel_38max",
-  "qwen3.8-flash": "qfmodel",
-  "Qwen3.8-Flash": "qfmodel",
-  "qwen3.7-max": "qmodel_latest",
-  "Qwen3.7-Max": "qmodel_latest",
-  "qwen3.7-plus": "qmodel",
-  "Qwen3.7-Plus": "qmodel",
-  "qwen3.7-flash": "q37fmodel",
-  "Qwen3.7-Flash": "q37fmodel",
-  "deepseek-v4-pro": "dmodel",
-  "DeepSeek-V4-Pro": "dmodel",
-  "deepseek-flash": "dfmodel",
-  "DeepSeek-Flash": "dfmodel",
-  "glm-5.3": "gmodel",
-  "GLM-5.3": "gmodel",
-  "glm-5.3-flash": "gfmodel",
-  "GLM-5.3-Flash": "gfmodel",
-  "glm-5.2": "gm51model",
-  "GLM-5.2": "gm51model",
-  "kimi-k3": "kmodel_latest",
-  "Kimi-K3": "kmodel_latest",
-  "kimi-k2.7-code": "kmodel",
-  "Kimi-K2.7-Code": "kmodel",
-  "minimax-m2.7": "mmodel",
-  "MiniMax-M2.7": "mmodel",
-  qmodel_38max: "qmodel_38max",
-};
-
+export { CHAT_FALLBACK };
 export function resolveModelKey(modelId) {
-  if (!modelId) return "qmodel_38max";
-  return MODEL_MAP[modelId] || MODEL_MAP[String(modelId).toLowerCase()] || "qmodel_38max";
+  return resolveFromCatalog(modelId, CHAT_FALLBACK);
 }
 
-export const PUBLIC_MODEL_IDS = [
-  "qwen3.8-max",
-  "Qwen3.8-Max",
-  "qwen3.8-flash",
-  "qwen3.7-max",
-  "auto",
-];
+export function openaiModelList(gateway) {
+  return openaiListFromGateway(gateway || { chat: CHAT_FALLBACK });
+}
 
-export function openaiModelList() {
-  return {
-    object: "list",
-    data: PUBLIC_MODEL_IDS.map((id) => ({
-      id,
-      object: "model",
-      created: 0,
-      owned_by: "qoder-cn",
-      name: id,
-    })),
-  };
+export async function openaiModelListLive(sess) {
+  if (!sess) return openaiModelList();
+  try {
+    const raw = await listRemoteModels(sess);
+    return openaiListFromGateway(raw);
+  } catch {
+    return openaiModelList();
+  }
 }
 
 export function normalizeContent(content) {

@@ -12,6 +12,12 @@ import {
   streamOpenAiSse,
 } from "../qoder_cn_endpoint/cn_complete.mjs";
 import { wantStream, handleChatCompletions } from "../qoder_cn_endpoint/server.mjs";
+import {
+  openaiListFromGateway,
+  formatRate,
+  displayLabel,
+  resolveModelKey as catalogResolve,
+} from "../qoder_cn_endpoint/catalog.mjs";
 import { qoderDecode, CHAT_URL, MODEL_LIST_URL } from "../qoder_cn_endpoint/cn_cosy.mjs";
 import { decryptCliUserFile } from "../qoder_cn_endpoint/cn_auth.mjs";
 
@@ -26,6 +32,7 @@ test("shipped completion modules never spawn qoder CLI", () => {
     "qoder_cn_endpoint/cn_complete.mjs",
     "qoder_cn_endpoint/cn_auth.mjs",
     "qoder_cn_endpoint/cn_cosy.mjs",
+    "qoder_cn_endpoint/catalog.mjs",
     "qoder_cn_endpoint/server.mjs",
   ];
   for (const rel of files) {
@@ -129,6 +136,34 @@ test("GET /v1/models catalog includes qwen3.8-max", () => {
   const ids = list.data.map((m) => m.id);
   assert.ok(ids.includes("qwen3.8-max"));
   assert.ok(ids.includes("Qwen3.8-Max"));
+});
+
+test("catalog maps live chat rows to slugs, rates, and Auto routing", () => {
+  const gateway = {
+    chat: [
+      { key: "auto", display_name: "Auto", enable: true, price_factor: 0.5, is_default: true },
+      { key: "qfmodel", display_name: "Qwen3.8-Flash", enable: true, price_factor: 0.1 },
+      { key: "dmodel", display_name: "DeepSeek-V4-Pro", enable: true, price_factor: 0.8 },
+    ],
+  };
+  const list = openaiListFromGateway(gateway);
+  const byId = Object.fromEntries(list.data.map((m) => [m.id, m]));
+  assert.equal(formatRate(0.1), "0.1x");
+  assert.equal(byId.auto.routing, true);
+  assert.equal(byId.auto.rate, "0.5x");
+  assert.match(byId.auto.name, /routing/);
+  assert.equal(byId["qwen3.8-flash"].rate, "0.1x");
+  assert.equal(byId["qwen3.8-flash"].price_factor, 0.1);
+  assert.equal(byId["Qwen3.8-Flash"].qoder_key, "qfmodel");
+  assert.equal(catalogResolve("qwen3.8-flash", gateway.chat), "qfmodel");
+  assert.equal(catalogResolve("DeepSeek-V4-Pro", gateway.chat), "dmodel");
+  assert.match(displayLabel(gateway.chat[1]), /0\.1x/);
+});
+
+test("resolveModelKey maps flash and glm rates aliases", () => {
+  assert.equal(resolveModelKey("qwen3.8-flash"), "qfmodel");
+  assert.equal(resolveModelKey("GLM-5.3-Flash"), "gfmodel");
+  assert.equal(resolveModelKey("auto"), "auto");
 });
 
 test("decryptCliUserFile is AES-128-CBC machine_id[:16]", async () => {
