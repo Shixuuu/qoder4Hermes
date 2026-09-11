@@ -13,6 +13,18 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  printBanner,
+  printHeader,
+  printInfo,
+  printOk,
+  printBad,
+  printWarn,
+  radioChoice,
+  promptYesNo,
+  readLine as wizardReadLine,
+  ui,
+} from "./wizard.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "..");
@@ -126,7 +138,7 @@ function printHelp() {
   console.log(`    ${c.fg("qoder-cn-infer")} ${c.dim("[options]")} ${c.mag("<command>")}`);
   console.log("");
   console.log(`  ${c.bold("Commands")}`);
-  console.log(cmd("setup", "Install, sign in, start, wire clients"));
+  console.log(cmd("setup", "Interactive onboarding wizard"));
   console.log(cmd("doctor", "Check Node, login, port, health"));
   console.log(cmd("login", "Sign in — browser or PAT"));
   console.log(cmd("logout", "Forget a stored PAT (CLI login kept)"));
@@ -455,7 +467,7 @@ async function cmdDoctor(args) {
     jsonOut({ ok: checks.every((x) => x.ok), checks, endpoint: endpoint(cfg) });
     return checks.every((x) => x.ok) ? 0 : 1;
   }
-  banner("doctor");
+  printBanner("Doctor", "Node, Qoder login, and the local API.");
   for (const x of checks) {
     const line = `${x.id.padEnd(12)} ${c.dim(x.detail)}`;
     console.log("  " + (x.ok ? c.ok(line) : c.bad(line)));
@@ -519,16 +531,15 @@ async function chooseLoginMethod(args) {
     if (storedPat() || process.env.QODERCN_PERSONAL_ACCESS_TOKEN || process.env.QODER_PAT) return "pat";
     return "browser";
   }
-  if (!args.json) {
-    console.log(`  ${c.bold("How do you want to sign in?")}`);
-    console.log("");
-    console.log(`    ${c.mag("1")}  ${c.fg("Browser")}   ${c.dim("qoderclicn login  ·  recommended")}`);
-    console.log(`    ${c.mag("2")}  ${c.fg("PAT")}       ${c.dim("token from  qoder.cn/account/integrations")}`);
-    console.log("");
-    process.stdout.write(`  ${c.dim("Choose")} ${c.fg("[1/2]")} ${c.dim("· default 1")}  `);
-  }
-  const ans = (await readLine(false)) || "1";
-  return ans.trim().startsWith("2") || /^p/i.test(ans.trim()) ? "pat" : "browser";
+  const idx = await radioChoice(
+    "How do you want to sign in?",
+    [
+      { label: "Browser", hint: "qoderclicn login · recommended" },
+      { label: "PAT", hint: "token from qoder.cn/account/integrations" },
+    ],
+    0
+  );
+  return idx === 1 ? "pat" : "browser";
 }
 
 function loginBrowser(args) {
@@ -553,11 +564,11 @@ function loginBrowser(args) {
 async function loginPat(args) {
   let token = (args.token || storedPat()).trim();
   if (!token && !args.yes) {
-    console.log("  " + c.dim("Create a token at"));
-    console.log("  " + c.cyan("https://qoder.cn/account/integrations"));
-    console.log("");
-    process.stdout.write("  " + c.dim("Paste PAT") + "  ");
-    token = await readLine(true);
+    printInfo("Create a token at  https://qoder.cn/account/integrations", null);
+    token = await wizardReadLine({
+      hidden: true,
+      prompt: ui.yellow("  Paste PAT: "),
+    });
   }
   if (!token) {
     if (args.json) jsonOut({ ok: false, error: "pat_missing" });
@@ -577,7 +588,9 @@ async function loginPat(args) {
 }
 
 async function cmdLogin(args) {
-  if (!args.json) banner("sign in");
+  if (!args.json && !args.fromSetup) {
+    printBanner("Sign in", "Browser (qoderclicn login) or a personal access token.");
+  }
   const method = await chooseLoginMethod(args);
   if (method === "pat") return loginPat(args);
   if (!which("qoderclicn") && !which("qodercn")) {
@@ -599,7 +612,7 @@ function cmdLogout(args) {
   }
   if (args.json) jsonOut({ ok: true });
   else {
-    banner("logout");
+    printBanner("Logout");
     console.log("  " + c.ok("stored PAT removed"));
     console.log("  " + c.dim("qoderclicn browser login was not touched"));
     console.log("");
@@ -647,18 +660,20 @@ async function cmdSetup(args) {
   const report = { steps: [] };
   const step = (id, ok, detail) => {
     report.steps.push({ id, ok, detail });
-    if (!args.json) {
-      const line = `${id.padEnd(12)} ${c.dim(detail)}`;
-      console.log("  " + (ok ? c.ok(line) : c.bad(line)));
-    }
+    if (!args.json) (ok ? printOk : printBad)(`${id.padEnd(12)} ${ui.dim(detail)}`);
   };
 
+  const interactive = !args.yes && !args.json && process.stdin.isTTY;
   if (!args.json) {
-    banner("setup");
-    console.log(`  ${c.dim("Prereqs are automatic. You only choose how to sign in.")}`);
-    console.log("");
+    printBanner(
+      "qoder-cn-infer Setup Wizard",
+      "Let's turn your Qoder CN quota into a local API.",
+      "Press Ctrl+C at any time to exit."
+    );
   }
 
+  printHeader("Prerequisites");
+  printInfo("Node, the CLI shim, and (for browser login) qoderclicn.");
   const nodeOk = Number(process.versions.node.split(".")[0]) >= 18;
   step("node", nodeOk, `v${process.versions.node}`);
   if (!nodeOk) {
@@ -681,34 +696,44 @@ async function cmdSetup(args) {
   linkCli();
   step("cli", true, BIN_LINK);
 
+  printHeader("Sign in");
+  printInfo("This is the only step that needs your Qoder account.");
   if (!hasLogin()) {
-    step("login", false, "not signed in");
     if (args.yes && !args.pat && !args.token && !args.browser) {
       if (args.json) {
         jsonOut({
           ok: false,
           error: "not_logged_in",
-          hint: "qoder-cn-infer login --browser  or  --pat --token pt-…  or  QODERCN_PERSONAL_ACCESS_TOKEN",
+          hint: "qoder-cn-infer login --browser  or  --pat --token pt-…",
           report,
         });
       } else {
-        console.log("");
-        console.log("  " + c.yellow("Sign in is required."));
-        console.log("  " + c.dim("Browser") + "   " + c.fg("qoder-cn-infer login --browser"));
-        console.log("  " + c.dim("PAT") + "       " + c.fg("qoder-cn-infer login --pat --token pt-…"));
-        console.log("  " + c.dim("Then") + "      " + c.fg("qoder-cn-infer setup --yes"));
+        printWarn("Sign in is required.");
+        printInfo("Browser   qoder-cn-infer login --browser");
+        printInfo("PAT       qoder-cn-infer login --pat --token pt-…");
+        printInfo("Then      qoder-cn-infer setup --yes");
       }
       return 2;
     }
-    console.log("");
-    const loginCode = await cmdLogin(args);
+    const loginArgs = { ...args, json: false };
+    if (interactive && !args.pat && !args.browser && !args.token) {
+      loginArgs.pat = false;
+      loginArgs.browser = false;
+    }
+    const loginCode = await cmdLogin({ ...loginArgs, json: false, fromSetup: true });
     if (loginCode !== 0 && !hasLogin()) {
       step("login", false, "still missing");
       return 2;
     }
+  } else if (interactive) {
+    printOk("Already signed in");
+    const again = await promptYesNo("  Sign in again / switch method?", false);
+    if (again) await cmdLogin({ ...args, json: false, fromSetup: true });
   }
   step("login", true, storedPat() ? "PAT" : "browser");
 
+  printHeader("Local API");
+  printInfo("Starts on 127.0.0.1 and restarts itself if it crashes.");
   const code = await cmdStart({ ...args, json: false });
   const healthy = await isHealthy(cfg);
   step("api", healthy, healthy ? endpoint(cfg) : "failed to start");
@@ -717,9 +742,20 @@ async function cmdSetup(args) {
     return code || 1;
   }
 
-  const h = wireHermes(cfg);
-  const o = wireOpenCode(cfg);
-  step("clients", true, `Hermes + OpenCode → ${endpoint(cfg)}`);
+  printHeader("Clients");
+  let wireH = true;
+  let wireO = true;
+  if (interactive) {
+    wireH = await promptYesNo("  Wire Hermes Agent (~/.hermes/config.yaml)?", true);
+    wireO = await promptYesNo("  Wire OpenCode (~/.config/opencode/opencode.json)?", true);
+  }
+  const h = wireH ? wireHermes(cfg) : { path: "(skipped)" };
+  const o = wireO ? wireOpenCode(cfg) : { path: "(skipped)" };
+  if (wireH) printOk(`Hermes    ${h.path}`);
+  else printInfo("Hermes skipped");
+  if (wireO) printOk(`OpenCode  ${o.path}`);
+  else printInfo("OpenCode skipped");
+  step("clients", true, `wired → ${endpoint(cfg)}`);
 
   if (args.json) {
     jsonOut({

@@ -19,7 +19,11 @@ chmod +x scripts/install.sh bin/qoder-cn-infer.mjs
 ./scripts/install.sh
 ```
 
-### 2. Watch the checklist
+### 2. Walk through the wizard
+
+You'll get a boxed **Setup Wizard** (same idea as `hermes setup`): prerequisites, then a radio list for **Browser vs PAT**, then the local API, then whether to wire Hermes / OpenCode.
+
+### 3. Watch the ticks
 
 You should see green ticks:
 
@@ -44,7 +48,7 @@ qoder-cn-infer login --browser
 qoder-cn-infer login --pat
 ```
 
-### 3. Use it
+### 4. Use it
 
 | Field | Value |
 | --- | --- |
