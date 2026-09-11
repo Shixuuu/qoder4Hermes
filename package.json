@@ -25,7 +25,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/retrilzzy/qoder-cn-infer.git"
+    "url": "git+https://github.com/Shixuuu/qoder-cn-infer.git"
   },
   "keywords": [
     "qoder",
@@ -37,7 +37,7 @@
   ],
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/retrilzzy/qoder-cn-infer/issues"
+    "url": "https://github.com/Shixuuu/qoder-cn-infer/issues"
   },
-  "homepage": "https://github.com/retrilzzy/qoder-cn-infer#readme"
+  "homepage": "https://github.com/Shixuuu/qoder-cn-infer#readme"
 }

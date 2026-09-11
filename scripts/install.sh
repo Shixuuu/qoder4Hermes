@@ -15,7 +15,7 @@ if [[ "${QODER_CN_YES:-}" == "1" ]]; then YES=1; fi
 
 ROOT_HINT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." 2>/dev/null && pwd || true)"
 DEST="${QODER_CN_HOME:-$HOME/.local/share/qoder-cn-infer}"
-REPO="${QODER_CN_REPO:-https://github.com/retrilzzy/qoder-cn-infer.git}"
+REPO="${QODER_CN_REPO:-https://github.com/Shixuuu/qoder-cn-infer.git}"
 NODE_MIN=18
 
 need_cmd() { command -v "$1" >/dev/null 2>&1; }
