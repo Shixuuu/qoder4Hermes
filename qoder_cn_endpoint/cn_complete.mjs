@@ -24,7 +24,7 @@ import {
 
 export { CHAT_FALLBACK };
 export function resolveModelKey(modelId) {
-  return resolveFromCatalog(modelId, CHAT_FALLBACK);
+  return resolveFromCatalog(modelId);
 }
 
 export function openaiModelList(gateway) {
@@ -325,7 +325,11 @@ export async function completeChat(
       },
     ],
     usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-    _debug: { url: CHAT_URL, prompt: messagesToPrompt(messages) },
+    _debug: {
+      url: CHAT_URL,
+      prompt: messagesToPrompt(messages),
+      modelKey: resolveModelKey(model),
+    },
   };
 }
 

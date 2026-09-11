@@ -166,6 +166,24 @@ test("resolveModelKey maps flash and glm rates aliases", () => {
   assert.equal(resolveModelKey("auto"), "auto");
 });
 
+test("routing tiers pass through as gateway keys", () => {
+  // CN gateway rejects tier keys; CLI maps them onto Auto.
+  assert.equal(resolveModelKey("efficient"), "auto");
+  assert.equal(resolveModelKey("Performance"), "auto");
+  assert.equal(resolveModelKey("lite"), "auto");
+  assert.equal(resolveModelKey("ultimate"), "auto");
+  const list = openaiModelList();
+  const byId = Object.fromEntries(list.data.map((m) => [m.id, m]));
+  assert.equal(byId.efficient.routing, true);
+  assert.equal(byId.efficient.qoder_key, "efficient");
+  assert.equal(byId.efficient.rate, "0x");
+  assert.equal(byId.performance.routing, true);
+  assert.equal(byId.performance.price_factor, 1.1);
+  assert.equal(byId.lite.routing, true);
+  assert.equal(byId.ultimate.price_factor, 1.6);
+  assert.match(byId.efficient.name, /routing/);
+});
+
 test("decryptCliUserFile is AES-128-CBC machine_id[:16]", async () => {
   const crypto = await import("node:crypto");
   const mid = "0123456789abcdef0123456789abcdef1234";

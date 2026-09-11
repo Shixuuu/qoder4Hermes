@@ -2,6 +2,54 @@
  * CN chat-scene catalog: display names, gateway keys, credit multipliers.
  * Auto is the only CN routing pool (CLI Default tab). Named models are New Models.
  */
+/**
+ * CLI routing-tier ids (`NuA` in qoderclicn). CN's chat gateway rejects these
+ * as model_config.key (invalid_model_error); the CLI still accepts
+ * `--model efficient` etc. and bills them under the Auto pool. We expose the
+ * picker ids and send `auto` upstream.
+ */
+export const TIER_GATEWAY_KEY = {
+  auto: "auto",
+  lite: "auto",
+  efficient: "auto",
+  performance: "auto",
+  ultimate: "auto",
+};
+
+/** CLI routing-tier ids (`NuA` in qoderclicn). Not all appear in --list-models. */
+export const ROUTING_TIERS = [
+  {
+    key: "auto",
+    display_name: "Auto",
+    price_factor: 0.5,
+    blurb: "Smart routing: pick a model per turn",
+  },
+  {
+    key: "lite",
+    display_name: "Lite",
+    price_factor: 0,
+    blurb: "Basic routing, free; slower at peak; no images",
+  },
+  {
+    key: "efficient",
+    display_name: "Efficient",
+    price_factor: 0,
+    blurb: "Standard routing; free as of 2026-09-03 (was 0.3x)",
+  },
+  {
+    key: "performance",
+    display_name: "Performance",
+    price_factor: 1.1,
+    blurb: "Advanced routing, high-quality output",
+  },
+  {
+    key: "ultimate",
+    display_name: "Ultimate",
+    price_factor: 1.6,
+    blurb: "Peak routing / deepest reasoning",
+  },
+];
+
 export const CHAT_FALLBACK = [
   { key: "auto", display_name: "Auto", price_factor: 0.5, is_default: true, is_reasoning: true, is_vl: true, max_input_tokens: 180000 },
   { key: "qmodel_38max", display_name: "Qwen3.8-Max", price_factor: 0.5, is_reasoning: true, is_vl: true, max_input_tokens: 180000 },
@@ -28,15 +76,19 @@ export function slugId(displayName) {
 export function formatRate(priceFactor) {
   if (priceFactor == null || Number.isNaN(Number(priceFactor))) return "";
   const n = Number(priceFactor);
+  if (n === 0) return "0x";
   const text = Number.isInteger(n) ? String(n) : String(n);
   return `${text}x`;
 }
 
 export function displayLabel(row) {
   const rate = formatRate(row.price_factor);
-  const isAuto = row.key === "auto" || slugId(row.display_name) === "auto";
-  if (isAuto) return `Auto (routing · ${rate} credits)`;
-  return `${row.display_name} (${rate} credits)`;
+  const free = Number(row.price_factor) === 0;
+  const rateBit = free ? "free" : `${rate} credits`;
+  if (row.routing || ROUTING_TIERS.some((t) => t.key === row.key)) {
+    return `${row.display_name} (routing · ${rateBit})`;
+  }
+  return `${row.display_name} (${rateBit})`;
 }
 
 export function normalizeChatRows(gateway) {
@@ -61,30 +113,62 @@ export function normalizeChatRows(gateway) {
   return rows.length ? rows : CHAT_FALLBACK;
 }
 
-export function aliasMap(rows = CHAT_FALLBACK) {
+export function mergedCatalogRows(gateway) {
+  const chat = normalizeChatRows(gateway);
+  const byKey = Object.fromEntries(chat.map((r) => [r.key, r]));
+  const rows = [];
+  const seen = new Set();
+  for (const tier of ROUTING_TIERS) {
+    const live = byKey[tier.key];
+    rows.push({
+      ...tier,
+      ...(live || {}),
+      key: tier.key,
+      display_name: tier.display_name,
+      price_factor: live?.price_factor ?? tier.price_factor,
+      routing: true,
+      blurb: tier.blurb,
+    });
+    seen.add(tier.key);
+  }
+  for (const row of chat) {
+    if (seen.has(row.key)) continue;
+    rows.push({ ...row, routing: false });
+    seen.add(row.key);
+  }
+  return rows;
+}
+
+export function aliasMap(rows) {
   const map = Object.create(null);
-  for (const row of rows) {
+  for (const row of rows || []) {
     map[row.key] = row.key;
-    map[row.display_name] = row.key;
-    map[slugId(row.display_name)] = row.key;
+    if (row.display_name) {
+      map[row.display_name] = row.key;
+      map[slugId(row.display_name)] = row.key;
+    }
+  }
+  for (const tier of ROUTING_TIERS) {
+    const gw = TIER_GATEWAY_KEY[tier.key] || "auto";
+    map[tier.key] = gw;
+    map[tier.display_name] = gw;
+    map[slugId(tier.display_name)] = gw;
   }
   return map;
 }
 
-export function resolveModelKey(modelId, rows = CHAT_FALLBACK) {
-  if (!modelId) return "qmodel_38max";
-  const map = aliasMap(rows);
-  return (
-    map[modelId] ||
-    map[String(modelId).toLowerCase()] ||
-    map[slugId(modelId)] ||
-    "qmodel_38max"
-  );
+export function resolveModelKey(modelId, rows) {
+  if (!modelId) return "auto";
+  const map = aliasMap(rows || mergedCatalogRows({ chat: CHAT_FALLBACK }));
+  const hit =
+    map[modelId] || map[String(modelId).toLowerCase()] || map[slugId(modelId)];
+  if (hit) return hit;
+  return String(modelId);
 }
 
-/** One OpenAI /v1/models row per CN chat model (slug id). */
+/** One OpenAI /v1/models row per routing tier + CN chat model. */
 export function openaiListFromGateway(gateway) {
-  const rows = normalizeChatRows(gateway);
+  const rows = mergedCatalogRows(gateway);
   const data = [];
   for (const row of rows) {
     const id = slugId(row.display_name);
@@ -98,7 +182,7 @@ export function openaiListFromGateway(gateway) {
       display_name: row.display_name,
       price_factor: row.price_factor,
       rate: formatRate(row.price_factor),
-      routing: row.key === "auto",
+      routing: Boolean(row.routing),
       reasoning: row.is_reasoning,
       vision: row.is_vl,
       context_length: row.max_input_tokens,
@@ -115,7 +199,7 @@ export function openaiListFromGateway(gateway) {
         display_name: row.display_name,
         price_factor: row.price_factor,
         rate: formatRate(row.price_factor),
-        routing: row.key === "auto",
+        routing: Boolean(row.routing),
         reasoning: row.is_reasoning,
         vision: row.is_vl,
         context_length: row.max_input_tokens,
@@ -126,9 +210,9 @@ export function openaiListFromGateway(gateway) {
   return { object: "list", data };
 }
 
-export function hermesModelsBlock(rows = CHAT_FALLBACK) {
+export function hermesModelsBlock(rows) {
   const models = {};
-  for (const row of rows) {
+  for (const row of rows || mergedCatalogRows({ chat: CHAT_FALLBACK })) {
     const id = slugId(row.display_name);
     models[id] = { name: displayLabel(row) };
   }

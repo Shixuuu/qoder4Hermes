@@ -15,6 +15,14 @@ providers:
     models:
       auto:
         name: Auto (routing · 0.5x credits)
+      lite:
+        name: Lite (routing · free)
+      efficient:
+        name: Efficient (routing · free)
+      performance:
+        name: Performance (routing · 1.1x credits)
+      ultimate:
+        name: Ultimate (routing · 1.6x credits)
       qwen3.8-max:
         name: Qwen3.8-Max (0.5x credits)
       qwen3.8-flash:
