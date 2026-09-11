@@ -70,6 +70,8 @@ export async function handleChatCompletions(req, res, body, sess, deps = {}) {
       messages: body.messages || [],
       model: body.model || "qwen3.8-max",
       sess,
+      tools: body.tools,
+      tool_choice: body.tool_choice,
       httpsRequest: deps.httpsRequest,
       httpsStream: deps.httpsStream,
     });
@@ -90,6 +92,8 @@ export async function handleChatCompletions(req, res, body, sess, deps = {}) {
       messages: body.messages || [],
       model: body.model || "qwen3.8-max",
       sess,
+      tools: body.tools,
+      tool_choice: body.tool_choice,
       httpsRequest: deps.httpsRequest,
       httpsStream: deps.httpsStream,
     })) {

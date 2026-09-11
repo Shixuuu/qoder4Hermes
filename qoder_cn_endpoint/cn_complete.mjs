@@ -17,6 +17,11 @@ import {
 } from "./cn_cosy.mjs";
 import { resolveIdentity } from "./cn_auth.mjs";
 import {
+  looksLikeToolMarkup,
+  parseToolMarkup,
+  openaiToolCallDeltas,
+} from "./tools.mjs";
+import {
   CHAT_FALLBACK,
   openaiListFromGateway,
   resolveModelKey as resolveFromCatalog,
@@ -63,15 +68,19 @@ export function messagesToPrompt(messages) {
   for (const m of messages || []) {
     const role = m?.role;
     const text = normalizeContent(m?.content);
-    if (!text) continue;
-    if (role === "system") {
+    if (role === "system" && text) {
       parts.push(
         `SYSTEM INSTRUCTION (obey exactly, output nothing else):\n${text}`
       );
-    } else if (role === "user") {
+    } else if (role === "user" && text) {
       parts.push(`USER:\n${text}`);
     } else if (role === "assistant") {
-      parts.push(`ASSISTANT:\n${text}`);
+      if (m.tool_calls?.length) {
+        parts.push(`ASSISTANT TOOL CALLS:\n${JSON.stringify(m.tool_calls)}`);
+      }
+      if (text) parts.push(`ASSISTANT:\n${text}`);
+    } else if (role === "tool" && text) {
+      parts.push(`TOOL RESULT:\n${text}`);
     }
   }
   return parts.join("\n\n");
@@ -95,14 +104,25 @@ export function parseSseAssistantText(sseBody) {
   return content;
 }
 
-function buildChatBody({ messages, modelKey, userType }) {
+function mapUpstreamMessage(m) {
+  const out = {
+    role: m.role,
+    content: normalizeContent(m.content),
+  };
+  if (m.tool_calls) out.tool_calls = m.tool_calls;
+  if (m.tool_call_id) out.tool_call_id = m.tool_call_id;
+  if (m.name) out.name = m.name;
+  return out;
+}
+
+function buildChatBody({ messages, modelKey, userType, tools, tool_choice }) {
   const prompt = messagesToPrompt(messages);
   const lastUser = [...(messages || [])]
     .reverse()
     .find((m) => m.role === "user");
   const userText = normalizeContent(lastUser?.content) || prompt;
   const nid = crypto.randomUUID();
-  return {
+  const body = {
     request_id: nid,
     request_set_id: crypto.randomUUID(),
     chat_record_id: nid,
@@ -128,16 +148,18 @@ function buildChatBody({ messages, modelKey, userType }) {
       is_reasoning: false,
       source: "system",
     },
-    messages: (messages || []).map((m) => ({
-      role: m.role,
-      content: normalizeContent(m.content),
-    })),
+    messages: (messages || []).map(mapUpstreamMessage),
     business: {
       id: crypto.randomUUID(),
       name: userText.slice(0, 30) || "chat",
       begin_at: Date.now(),
     },
   };
+  if (Array.isArray(tools) && tools.length) {
+    body.tools = tools;
+    body.tool_choice = tool_choice || "auto";
+  }
+  return body;
 }
 
 export async function listRemoteModels(sess, httpsRequest = defaultHttpsRequest) {
@@ -173,6 +195,7 @@ export function parseCnDataLine(payload) {
       delta: {
         role: delta.role || undefined,
         content: typeof delta.content === "string" ? delta.content : "",
+        tool_calls: delta.tool_calls,
       },
       finish_reason: finish,
     };
@@ -207,12 +230,14 @@ function resolveStreamFn({ httpsStream, httpsRequest }) {
   return defaultHttpsStream;
 }
 
-function buildUpstreamPost({ messages, model, sess }) {
+function buildUpstreamPost({ messages, model, sess, tools, tool_choice }) {
   const modelKey = resolveModelKey(model);
   const chatObj = buildChatBody({
     messages,
     modelKey,
     userType: sess.identity.user_type,
+    tools,
+    tool_choice,
   });
   const body = qoderEncode(JSON.stringify(chatObj));
   const date = String(Math.floor(Date.now() / 1000));
@@ -239,6 +264,8 @@ export async function* streamOpenAiSse({
   messages,
   model = "qwen3.8-max",
   sess,
+  tools,
+  tool_choice,
   httpsStream,
   httpsRequest,
 } = {}) {
@@ -246,7 +273,13 @@ export async function* streamOpenAiSse({
     const id = await resolveIdentity(httpsRequest || defaultHttpsRequest);
     sess = buildSession(id.identity, id.machineId, id.machineToken, id.machineType);
   }
-  const { body, headers, modelKey } = buildUpstreamPost({ messages, model, sess });
+  const { body, headers } = buildUpstreamPost({
+    messages,
+    model,
+    sess,
+    tools,
+    tool_choice,
+  });
   const streamFn = resolveStreamFn({ httpsStream, httpsRequest });
   const upstream = await streamFn("POST", CHAT_URL, {
     headers,
@@ -262,6 +295,10 @@ export async function* streamOpenAiSse({
   const created = Math.floor(Date.now() / 1000);
   let sentRole = false;
   let sawFinish = false;
+  let emittedToolCalls = false;
+  let contentBuf = "";
+  const clientHasTools = Array.isArray(tools) && tools.length > 0;
+
   for await (const line of upstream.lines()) {
     if (!line.startsWith("data:")) continue;
     const parsed = parseCnDataLine(line.slice(5).trim());
@@ -272,14 +309,54 @@ export async function* streamOpenAiSse({
       delta.role = parsed.delta?.role || "assistant";
       sentRole = true;
     }
-    if (parsed.delta?.content) delta.content = parsed.delta.content;
+    if (parsed.delta?.tool_calls?.length) {
+      delta.tool_calls = parsed.delta.tool_calls;
+      emittedToolCalls = true;
+    }
+    const piece = parsed.delta?.content || "";
+    if (piece) {
+      const maybeMarkup = clientHasTools || looksLikeToolMarkup(contentBuf + piece);
+      if (maybeMarkup) {
+        contentBuf += piece;
+      } else {
+        delta.content = piece;
+      }
+    }
     const finish = parsed.finish_reason || null;
-    if (Object.keys(delta).length > 0 || finish) {
-      if (finish) sawFinish = true;
-      yield openAiSseChunk(id, created, model, delta, finish);
+    if (finish === "tool_calls") {
+      emittedToolCalls = true;
+      sawFinish = true;
+      yield openAiSseChunk(id, created, model, delta, "tool_calls");
+      continue;
+    }
+    if (Object.keys(delta).length > 0) {
+      yield openAiSseChunk(id, created, model, delta, null);
+    }
+    if (finish && finish !== "stop") {
+      sawFinish = true;
+      yield openAiSseChunk(id, created, model, {}, finish);
     }
   }
-  if (!sawFinish) {
+
+  const markupCalls = parseToolMarkup(contentBuf);
+  if (markupCalls.length) {
+    if (!sentRole) {
+      yield openAiSseChunk(id, created, model, { role: "assistant" }, null);
+    }
+    yield openAiSseChunk(
+      id,
+      created,
+      model,
+      { tool_calls: openaiToolCallDeltas(markupCalls) },
+      null
+    );
+    yield openAiSseChunk(id, created, model, {}, "tool_calls");
+  } else if (contentBuf) {
+    yield openAiSseChunk(id, created, model, { content: contentBuf }, null);
+    if (!sawFinish) yield openAiSseChunk(id, created, model, {}, "stop");
+  } else if (emittedToolCalls) {
+    if (!sawFinish) yield openAiSseChunk(id, created, model, {}, "tool_calls");
+  } else if (!sawFinish) {
     yield openAiSseChunk(id, created, model, {}, "stop");
   }
   yield "data: [DONE]\n\n";
@@ -289,16 +366,27 @@ export async function* streamOpenAiSse({
  * Shipped non-stream completion: same transport as streamOpenAiSse, buffered JSON.
  */
 export async function completeChat(
-  { messages, model = "qwen3.8-max", sess, httpsRequest = defaultHttpsRequest, httpsStream } = {}
+  {
+    messages,
+    model = "qwen3.8-max",
+    sess,
+    tools,
+    tool_choice,
+    httpsRequest = defaultHttpsRequest,
+    httpsStream,
+  } = {}
 ) {
   let content = "";
   let finish = "stop";
   let id = "chatcmpl-" + crypto.randomUUID().replace(/-/g, "").slice(0, 24);
   let created = Math.floor(Date.now() / 1000);
+  const toolCalls = [];
   for await (const ev of streamOpenAiSse({
     messages,
     model,
     sess,
+    tools,
+    tool_choice,
     httpsRequest,
     httpsStream,
   })) {
@@ -310,8 +398,24 @@ export async function completeChat(
     created = obj.created || created;
     const choice = (obj.choices || [])[0] || {};
     if (choice.delta?.content) content += choice.delta.content;
+    if (choice.delta?.tool_calls) {
+      for (const tc of choice.delta.tool_calls) {
+        const idx = tc.index ?? toolCalls.length;
+        if (!toolCalls[idx]) toolCalls[idx] = tc;
+        else {
+          const prev = toolCalls[idx];
+          if (tc.function?.arguments) {
+            prev.function = prev.function || {};
+            prev.function.arguments =
+              (prev.function.arguments || "") + tc.function.arguments;
+          }
+        }
+      }
+    }
     if (choice.finish_reason) finish = choice.finish_reason;
   }
+  const message = { role: "assistant", content };
+  if (toolCalls.length) message.tool_calls = toolCalls.filter(Boolean);
   return {
     id,
     object: "chat.completion",
@@ -320,7 +424,7 @@ export async function completeChat(
     choices: [
       {
         index: 0,
-        message: { role: "assistant", content },
+        message,
         finish_reason: finish,
       },
     ],

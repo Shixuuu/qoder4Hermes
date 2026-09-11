@@ -20,6 +20,7 @@ import {
 } from "../qoder_cn_endpoint/catalog.mjs";
 import { qoderDecode, CHAT_URL, MODEL_LIST_URL } from "../qoder_cn_endpoint/cn_cosy.mjs";
 import { decryptCliUserFile } from "../qoder_cn_endpoint/cn_auth.mjs";
+import { parseDsmlToolCalls, parseToolMarkup } from "../qoder_cn_endpoint/tools.mjs";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -33,6 +34,7 @@ test("shipped completion modules never spawn qoder CLI", () => {
     "qoder_cn_endpoint/cn_auth.mjs",
     "qoder_cn_endpoint/cn_cosy.mjs",
     "qoder_cn_endpoint/catalog.mjs",
+    "qoder_cn_endpoint/tools.mjs",
     "qoder_cn_endpoint/server.mjs",
   ];
   for (const rel of files) {
@@ -334,4 +336,99 @@ test("handleChatCompletions writes SSE for stream:true", async () => {
   assert.match(body, /"finish_reason":"stop"/);
   assert.match(body, /data: \[DONE\]/);
   assert.equal(res.ended, true);
+});
+
+const SAMPLE_DSML = `<｜｜DSML｜｜ calls> <｜｜DSML｜｜ invoke name="terminal"> <｜｜DSML｜｜ parameter name="command" string="true">ls -la "/home/shixu/Downloads/KXP_Testing_Docs_revised"</｜｜DSML｜｜ parameter> </｜｜DSML｜｜ invoke> <｜｜DSML｜｜ invoke name="read_file"> <｜｜DSML｜｜ parameter name="path" string="true">/home/shixu/Downloads/KXP_Testing_Docs_revised/README.md</｜｜DSML｜｜ parameter> </｜｜DSML｜｜ invoke> </｜｜DSML｜｜ calls>`;
+
+test("parseDsmlToolCalls extracts Hermes tools from DSML markup", () => {
+  const calls = parseDsmlToolCalls(SAMPLE_DSML);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].function.name, "terminal");
+  assert.match(calls[0].function.arguments, /KXP_Testing_Docs_revised/);
+  assert.equal(calls[1].function.name, "read_file");
+  assert.match(calls[1].function.arguments, /README.md/);
+});
+
+test("streamOpenAiSse converts DSML content into OpenAI tool_calls", async () => {
+  const inner = JSON.stringify({
+    choices: [{ delta: { role: "assistant", content: SAMPLE_DSML }, index: 0 }],
+  });
+  async function httpsStream() {
+    return {
+      status: 200,
+      async *lines() {
+        yield `data:${JSON.stringify({ body: inner, statusCodeValue: 200 })}`;
+      },
+    };
+  }
+  const sess = {
+    cosyKey: "k",
+    info: "aW5mbw==",
+    identity: {
+      uid: "u1",
+      name: "n",
+      user_type: "personal_standard",
+      security_oauth_token: "jt-x",
+      refresh_token: "jrt-x",
+      aid: "u1",
+    },
+    machineId: "m".repeat(36),
+    machineToken: "tok",
+    machineType: "t",
+  };
+  const events = [];
+  for await (const ev of streamOpenAiSse({
+    messages: [{ role: "user", content: "look at the screens" }],
+    model: "qwen3.8-max",
+    sess,
+    tools: [{ type: "function", function: { name: "terminal" } }],
+    httpsStream,
+  })) {
+    events.push(ev);
+  }
+  const joined = events.join("");
+  assert.match(joined, /"tool_calls"/);
+  assert.match(joined, /"name":"terminal"/);
+  assert.match(joined, /"name":"read_file"/);
+  assert.match(joined, /"finish_reason":"tool_calls"/);
+  assert.doesNotMatch(joined, /DSML/);
+});
+
+test("completeChat forwards client tools in the CN body", async () => {
+  const calls = [];
+  async function fakeHttps(method, url, opts) {
+    calls.push(opts?.body || "");
+    const inner = JSON.stringify({
+      choices: [{ delta: { content: "ok" }, index: 0 }],
+    });
+    return {
+      status: 200,
+      body: `data:${JSON.stringify({ body: inner, statusCodeValue: 200 })}\n`,
+    };
+  }
+  const sess = {
+    cosyKey: "k",
+    info: "aW5mbw==",
+    identity: {
+      uid: "u1",
+      name: "n",
+      user_type: "personal_standard",
+      security_oauth_token: "jt-x",
+      refresh_token: "jrt-x",
+      aid: "u1",
+    },
+    machineId: "m".repeat(36),
+    machineToken: "tok",
+    machineType: "t",
+  };
+  await completeChat({
+    messages: [{ role: "user", content: "hi" }],
+    model: "qwen3.8-max",
+    sess,
+    tools: [{ type: "function", function: { name: "read_file" } }],
+    httpsRequest: fakeHttps,
+  });
+  const decoded = qoderDecode(calls[0]).toString("utf8");
+  assert.match(decoded, /read_file/);
+  assert.match(decoded, /"tools"/);
 });
