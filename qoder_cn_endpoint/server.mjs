@@ -1,10 +1,19 @@
 #!/usr/bin/env node
 /**
  * Loopback OpenAI-compatible facade for Qoder CN model transport.
- * Usage: node qoder_cn_endpoint/server.mjs [--port 8787] [--host 127.0.0.1]
+ * Usage: node qoder_cn_endpoint/server.mjs
+ *
+ * stream !== false → OpenAI SSE (Hermes default). stream:false → JSON.
  */
 import http from "node:http";
-import { completeChat, openaiModelList, buildSession } from "./cn_complete.mjs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  completeChat,
+  openaiModelList,
+  buildSession,
+  streamOpenAiSse,
+} from "./cn_complete.mjs";
 import { resolveIdentity } from "./cn_auth.mjs";
 
 const host = process.env.QODER_CN_INFER_HOST || "127.0.0.1";
@@ -18,6 +27,16 @@ function getSess() {
     );
   }
   return sessPromise;
+}
+
+export function wantStream(body, req) {
+  const s = body?.stream;
+  if (s === false || s === "false" || s === 0) return false;
+  if (s === true || s === "true" || s === 1) return true;
+  const accept = String(req?.headers?.accept || "");
+  if (accept.includes("text/event-stream")) return true;
+  // Hermes streams even when the dumped body omits `stream`.
+  return true;
 }
 
 function readJson(req) {
@@ -45,6 +64,54 @@ function send(res, status, obj) {
   res.end(body);
 }
 
+export async function handleChatCompletions(req, res, body, sess, deps = {}) {
+  if (!wantStream(body, req)) {
+    const out = await completeChat({
+      messages: body.messages || [],
+      model: body.model || "qwen3.8-max",
+      sess,
+      httpsRequest: deps.httpsRequest,
+      httpsStream: deps.httpsStream,
+    });
+    delete out._debug;
+    send(res, 200, out);
+    return;
+  }
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+  if (typeof res.flushHeaders === "function") res.flushHeaders();
+  res.socket?.setNoDelay?.(true);
+  try {
+    for await (const ev of streamOpenAiSse({
+      messages: body.messages || [],
+      model: body.model || "qwen3.8-max",
+      sess,
+      httpsRequest: deps.httpsRequest,
+      httpsStream: deps.httpsStream,
+    })) {
+      if (!res.write(ev)) {
+        await new Promise((r) => res.once("drain", r));
+      }
+    }
+  } catch (e) {
+    const err = {
+      id: "chatcmpl-error",
+      object: "chat.completion.chunk",
+      created: Math.floor(Date.now() / 1000),
+      model: body.model || "qwen3.8-max",
+      choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+      error: { message: String(e.message || e) },
+    };
+    res.write(`data: ${JSON.stringify(err)}\n\n`);
+    res.write("data: [DONE]\n\n");
+  }
+  res.end();
+}
+
 const server = http.createServer(async (req, res) => {
   const url = req.url.split("?")[0];
   try {
@@ -59,21 +126,27 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && url === "/v1/chat/completions") {
       const body = await readJson(req);
       const sess = await getSess();
-      const out = await completeChat({
-        messages: body.messages || [],
-        model: body.model || "qwen3.8-max",
-        sess,
-      });
-      delete out._debug;
-      send(res, 200, out);
+      await handleChatCompletions(req, res, body, sess);
       return;
     }
     send(res, 404, { error: { message: `no ${req.method} ${url}` } });
   } catch (e) {
-    send(res, 500, { error: { message: String(e.message || e) } });
+    if (!res.headersSent) {
+      send(res, 500, { error: { message: String(e.message || e) } });
+    } else {
+      res.end();
+    }
   }
 });
 
-server.listen(port, host, () => {
-  console.log(`qoder-cn inference facade http://${host}:${port}/v1`);
-});
+const isMain =
+  Boolean(process.argv[1]) &&
+  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (isMain) {
+  server.listen(port, host, () => {
+    console.log(`qoder-cn inference facade http://${host}:${port}/v1`);
+  });
+}
+
+export { server, host, port };

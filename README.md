@@ -23,7 +23,7 @@ CLI login file `~/.qoder-cn/.auth/user` (AES-128-CBC, `machine_id[:16]`) already
 
 ## Run the facade
 
-The facade serves `GET /v1/models` and `POST /v1/chat/completions`.
+The facade serves `GET /v1/models` and `POST /v1/chat/completions`. Hermes uses streaming: `stream` not `false` returns OpenAI SSE (`chat.completion.chunk` + `finish_reason` + `data: [DONE]`). `stream: false` still returns one JSON object.
 
 ```bash
 node qoder_cn_endpoint/server.mjs

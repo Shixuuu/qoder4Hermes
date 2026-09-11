@@ -9,7 +9,9 @@ import {
   parseSseAssistantText,
   resolveModelKey,
   openaiModelList,
+  streamOpenAiSse,
 } from "../qoder_cn_endpoint/cn_complete.mjs";
+import { wantStream, handleChatCompletions } from "../qoder_cn_endpoint/server.mjs";
 import { qoderDecode, CHAT_URL, MODEL_LIST_URL } from "../qoder_cn_endpoint/cn_cosy.mjs";
 import { decryptCliUserFile } from "../qoder_cn_endpoint/cn_auth.mjs";
 
@@ -147,4 +149,126 @@ test("decryptCliUserFile is AES-128-CBC machine_id[:16]", async () => {
 test("model list URL is CN gateway not Cloud Agents", () => {
   assert.match(MODEL_LIST_URL, /gateway\.qoder\.com\.cn/);
   assert.equal(MODEL_LIST_URL.includes("api.qoder.com.cn/api/v1/cloud"), false);
+});
+
+test("wantStream defaults true (Hermes) and honors stream:false", () => {
+  assert.equal(wantStream({}, { headers: {} }), true);
+  assert.equal(wantStream({ stream: true }, { headers: {} }), true);
+  assert.equal(wantStream({ stream: false }, { headers: {} }), false);
+});
+
+test("streamOpenAiSse emits content chunks, finish_reason, and [DONE]", async () => {
+  const inner1 = JSON.stringify({
+    choices: [{ delta: { role: "assistant", content: "" }, index: 0 }],
+  });
+  const inner2 = JSON.stringify({
+    choices: [{ delta: { content: "HELLO" }, index: 0 }],
+  });
+  const cn = [
+    `data:${JSON.stringify({ body: inner1, statusCodeValue: 200 })}`,
+    `data:${JSON.stringify({ body: inner2, statusCodeValue: 200 })}`,
+  ];
+  async function fakeStream() {
+    return {
+      status: 200,
+      async *lines() {
+        for (const line of cn) yield line;
+      },
+    };
+  }
+  const sess = {
+    cosyKey: "k",
+    info: "aW5mbw==",
+    identity: {
+      uid: "u1",
+      name: "n",
+      user_type: "personal_standard",
+      security_oauth_token: "jt-x",
+      refresh_token: "jrt-x",
+      aid: "u1",
+    },
+    machineId: "m".repeat(36),
+    machineToken: "tok",
+    machineType: "t",
+  };
+  const events = [];
+  for await (const ev of streamOpenAiSse({
+    messages: [{ role: "user", content: "hi" }],
+    model: "qwen3.8-max",
+    sess,
+    httpsStream: fakeStream,
+  })) {
+    events.push(ev);
+  }
+  const joined = events.join("");
+  assert.match(joined, /chat\.completion\.chunk/);
+  assert.match(joined, /HELLO/);
+  assert.match(joined, /"finish_reason":"stop"/);
+  assert.match(joined, /data: \[DONE\]/);
+  const lastChunk = events[events.length - 2];
+  const parsed = JSON.parse(lastChunk.replace(/^data: /, "").trim());
+  assert.equal(parsed.choices[0].finish_reason, "stop");
+});
+
+test("handleChatCompletions writes SSE for stream:true", async () => {
+  const inner = JSON.stringify({
+    choices: [{ delta: { content: "ZED", role: "assistant" }, index: 0 }],
+  });
+  const fakeSess = {
+    cosyKey: "k",
+    info: "aW5mbw==",
+    identity: {
+      uid: "u1",
+      name: "n",
+      user_type: "personal_standard",
+      security_oauth_token: "jt-x",
+      refresh_token: "jrt-x",
+      aid: "u1",
+    },
+    machineId: "m".repeat(36),
+    machineToken: "tok",
+    machineType: "t",
+  };
+  async function httpsStream() {
+    return {
+      status: 200,
+      async *lines() {
+        yield `data:${JSON.stringify({ body: inner, statusCodeValue: 200 })}`;
+      },
+    };
+  }
+  const chunks = [];
+  let headers = null;
+  const res = {
+    headersSent: false,
+    writeHead(status, h) {
+      this.status = status;
+      headers = h;
+      this.headersSent = true;
+    },
+    flushHeaders() {},
+    socket: { setNoDelay() {} },
+    write(d) {
+      chunks.push(String(d));
+      return true;
+    },
+    end() {
+      this.ended = true;
+    },
+    once() {},
+  };
+  await handleChatCompletions(
+    { headers: {} },
+    res,
+    { stream: true, model: "qwen3.8-max", messages: [{ role: "user", content: "hi" }] },
+    fakeSess,
+    { httpsStream }
+  );
+  const ctype = headers["Content-Type"] || headers["content-type"];
+  assert.match(String(ctype), /text\/event-stream/);
+  const body = chunks.join("");
+  assert.match(body, /ZED/);
+  assert.match(body, /"finish_reason":"stop"/);
+  assert.match(body, /data: \[DONE\]/);
+  assert.equal(res.ended, true);
 });

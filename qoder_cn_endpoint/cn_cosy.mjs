@@ -162,3 +162,56 @@ export function defaultHttpsRequest(method, urlStr, { headers, body, timeout = 1
     req.end();
   });
 }
+
+/** Streaming HTTPS: resolve { status, lines() } so callers can flush SSE as it arrives. */
+export function defaultHttpsStream(method, urlStr, { headers, body, timeout = 180000 } = {}) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(urlStr);
+    const req = https.request(
+      {
+        method,
+        hostname: u.hostname,
+        path: u.pathname + u.search,
+        headers,
+        timeout,
+      },
+      (res) => {
+        async function* lines() {
+          let buf = "";
+          for await (const chunk of res) {
+            buf += chunk.toString("utf8");
+            let nl;
+            while ((nl = buf.indexOf("\n")) >= 0) {
+              const line = buf.slice(0, nl).replace(/\r$/, "");
+              buf = buf.slice(nl + 1);
+              yield line;
+            }
+          }
+          if (buf) yield buf.replace(/\r$/, "");
+        }
+        resolve({ status: res.statusCode, lines });
+      }
+    );
+    req.on("error", reject);
+    req.on("timeout", () => {
+      req.destroy();
+      reject(new Error("timeout"));
+    });
+    if (body) req.write(body);
+    req.end();
+  });
+}
+
+export function httpsStreamFromBuffered(httpsRequest) {
+  return async (method, url, opts) => {
+    const res = await httpsRequest(method, url, opts);
+    const raw = String(res.body || "");
+    const parts = raw.split(/\n/).map((l) => l.replace(/\r$/, ""));
+    return {
+      status: res.status,
+      async *lines() {
+        for (const line of parts) yield line;
+      },
+    };
+  };
+}
