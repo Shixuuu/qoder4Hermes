@@ -38,6 +38,7 @@ test("shipped completion modules never spawn qoder CLI", () => {
     "qoder_cn_endpoint/cn_auth.mjs",
     "qoder_cn_endpoint/cn_cosy.mjs",
     "qoder_cn_endpoint/catalog.mjs",
+    "qoder_cn_endpoint/regions.mjs",
     "qoder_cn_endpoint/tools.mjs",
     "qoder_cn_endpoint/server.mjs",
   ];

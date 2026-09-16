@@ -16,6 +16,7 @@ import {
   qoderDecode,
 } from "./cn_cosy.mjs";
 import { resolveIdentity } from "./cn_auth.mjs";
+import { endpointsFor } from "./regions.mjs";
 import {
   looksLikeToolMarkup,
   parseToolMarkup,
@@ -52,10 +53,10 @@ export function openaiModelList(gateway) {
   return openaiListFromGateway(gateway || { chat: CHAT_FALLBACK });
 }
 
-export async function openaiModelListLive(sess) {
+export async function openaiModelListLive(sess, region = "cn") {
   if (!sess) return openaiModelList();
   try {
-    const raw = await listRemoteModels(sess);
+    const raw = await listRemoteModels(sess, undefined, region);
     return openaiListFromGateway(raw);
   } catch {
     return openaiModelList();
@@ -243,7 +244,7 @@ function buildChatBody({
   return applyClientOptions(body, { tools, tool_choice, reasoning_effort, extra });
 }
 
-export async function listRemoteModels(sess, httpsRequest = defaultHttpsRequest) {
+export async function listRemoteModels(sess, httpsRequest = defaultHttpsRequest, region = "cn") {
   const date = String(Math.floor(Date.now() / 1000));
   const headers = cosyHeaders(sess, {
     date,
@@ -251,7 +252,7 @@ export async function listRemoteModels(sess, httpsRequest = defaultHttpsRequest)
     pathWithoutAlgo: MODEL_LIST_PATH,
     accept: "application/json",
   });
-  const res = await httpsRequest("GET", MODEL_LIST_URL, { headers, timeout: 20000 });
+  const res = await httpsRequest("GET", endpointsFor(region).modelListUrl, { headers, timeout: 20000 });
   if (res.status !== 200) {
     throw new Error(`model list HTTP ${res.status}: ${res.body.slice(0, 200)}`);
   }
@@ -409,11 +410,12 @@ export async function* streamOpenAiSse({
   tool_choice,
   reasoning_effort,
   extra,
+  region = "cn",
   httpsStream,
   httpsRequest,
 } = {}) {
   if (!sess) {
-    const id = await resolveIdentity(httpsRequest || defaultHttpsRequest);
+    const id = await resolveIdentity(httpsRequest || defaultHttpsRequest, { region });
     sess = buildSession(id.identity, id.machineId, id.machineToken, id.machineType);
   }
   const { body, headers } = buildUpstreamPost({
@@ -426,7 +428,7 @@ export async function* streamOpenAiSse({
     extra,
   });
   const streamFn = resolveStreamFn({ httpsStream, httpsRequest });
-  const upstream = await streamFn("POST", CHAT_URL, {
+  const upstream = await streamFn("POST", endpointsFor(region).chatUrl, {
     headers,
     body,
     timeout: 600000,
@@ -535,6 +537,7 @@ export async function completeChat(
     tool_choice,
     reasoning_effort,
     extra,
+    region = "cn",
     httpsRequest = defaultHttpsRequest,
     httpsStream,
   } = {}
@@ -553,6 +556,7 @@ export async function completeChat(
     tool_choice,
     reasoning_effort,
     extra,
+    region,
     httpsRequest,
     httpsStream,
   })) {
@@ -597,7 +601,7 @@ export async function completeChat(
     ],
     usage: capturedUsage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
     _debug: {
-      url: CHAT_URL,
+      url: endpointsFor(region).chatUrl,
       prompt: messagesToPrompt(messages),
       modelKey: resolveModelKey(model),
     },

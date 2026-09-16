@@ -31,13 +31,23 @@ import { buildSession } from "../qoder_cn_endpoint/cn_cosy.mjs";
 import { usageSummary, usagePath, formatCompact } from "../qoder_cn_endpoint/usage_store.mjs";
 import { createBot } from "../qoder_cn_endpoint/telegram.mjs";
 import { claimStatus, runClaim } from "../qoder_cn_endpoint/claim.mjs";
+import {
+  REGION_DEFS,
+  cliLoginPaths,
+  configDir,
+  endpointsFor,
+  normalizeRegion,
+  parseRegion,
+  resolveRegion,
+  storedPatPath,
+} from "../qoder_cn_endpoint/regions.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "..");
-const VERSION = "1.5.1";
+const VERSION = "1.6.0";
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 8787;
-const CONFIG_DIR = path.join(os.homedir(), ".config", "qoder-cn-infer");
+const CONFIG_DIR = configDir();
 const CONFIG_PATH = path.join(CONFIG_DIR, "config.json");
 const STATE_DIR = path.join(os.homedir(), ".local", "state", "qoder-cn-infer");
 const PID_PATH = path.join(STATE_DIR, "server.pid");
@@ -67,8 +77,6 @@ const c = {
   bad: (s) => `${tty ? "\x1b[38;2;251;113;133m✖\x1b[0m" : "err"} ${s}`,
   skip: (s) => `${tty ? "\x1b[38;2;161;161;170m○\x1b[0m" : ".. "} ${s}`,
 };
-const PAT_FILE = path.join(CONFIG_DIR, "pat");
-
 function rule(width = 48) {
   return c.dim("─".repeat(width));
 }
@@ -103,6 +111,7 @@ function parseArgs(argv) {
     install: false,
     uninstall: false,
     plain: false,
+    region: "",
   };
   const addProfiles = (v) => {
     for (const s of String(v || "").split(",")) {
@@ -138,6 +147,8 @@ function parseArgs(argv) {
     else if (a === "--install") args.install = true;
     else if (a === "--uninstall") args.uninstall = true;
     else if (a === "--plain") args.plain = true;
+    else if (a === "--region") args.region = argv[++i] || "";
+    else if (a.startsWith("--region=")) args.region = a.slice(9);
     else if (!a.startsWith("-")) args._.push(a);
   }
   if (process.env.QODER_CN_YES === "1") args.yes = true;
@@ -195,9 +206,10 @@ function printHelp() {
   console.log(cmd("uninstall", "Remove service and PATH shim"));
   console.log("");
   console.log(`  ${c.bold("Login")}`);
-  console.log(`    ${c.mag("--browser")}              ${c.dim("qoderclicn login in the browser")}`);
+  console.log(`    ${c.mag("--browser")}              ${c.dim("official CLI login in the browser")}`);
   console.log(`    ${c.mag("--pat")}                  ${c.dim("paste / store a personal access token")}`);
   console.log(`    ${c.mag("--token")} ${c.dim("<pt-…>")}         ${c.dim("non-interactive PAT")}`);
+  console.log(`    ${c.mag("--region")} ${c.dim("<cn|global>")}    ${c.dim("Qoder CN (default) or Qoder International")}`);
   console.log("");
   console.log(`  ${c.bold("Options")}`);
   console.log(`    ${c.mag("-y, --yes")}              ${c.dim("no prompts (agents)")}`);
@@ -209,6 +221,7 @@ function printHelp() {
   console.log(`    ${c.mag("--refresh")}              ${c.dim("usage: bypass account cache")}`);
   console.log(`    ${c.mag("--local")}                ${c.dim("usage: skip the Qoder account call")}`);
   console.log(`    ${c.mag("--plain")}                ${c.dim("usage: compact text for chat relays")}`);
+  console.log(`    ${c.mag("--region")} ${c.dim("<r>")}           ${c.dim("cn (default) or global — Qoder International")}`);
   console.log(`    ${c.mag("--tg-token")} ${c.dim("<t>")}       ${c.dim("telegram: BotFather token (stored 600)")}`);
   console.log(`    ${c.mag("--chat")} ${c.dim("<id>")}           ${c.dim("telegram: bind a chat id")}`);
   console.log(`    ${c.mag("--install")}              ${c.dim("telegram: run as a service")}`);
@@ -220,38 +233,46 @@ function printHelp() {
   console.log(`    2  ${c.dim("Choose browser or PAT when asked")}`);
   console.log(`    3  ${c.dim("Point Hermes at")} ${c.cyan("http://127.0.0.1:8787/v1")}`);
   console.log("");
+  console.log(`  ${c.bold("International (Qoder)")}`);
+  console.log(`    ${c.fg(`qoder-cn-infer login --region global --pat --token pt-…`)}`);
+  console.log(`    ${c.dim("Token from")} ${c.cyan("https://qoder.com/account/integrations")} ${c.dim("· separate account from Qoder CN")}`);
+  console.log("");
 }
 
 function jsonOut(obj) {
   console.log(JSON.stringify(obj));
 }
 
-function storedPat() {
-  const env = (process.env.QODERCN_PERSONAL_ACCESS_TOKEN || process.env.QODER_PAT || "").trim();
-  if (env) return env;
+function storedPat(region = "cn") {
+  const regionId = normalizeRegion(region);
+  for (const name of REGION_DEFS[regionId].patEnvVars) {
+    const env = (process.env[name] || "").trim();
+    if (env) return env;
+  }
   try {
-    return fs.readFileSync(PAT_FILE, "utf8").trim();
+    return fs.readFileSync(storedPatPath(regionId), "utf8").trim();
   } catch {
     return "";
   }
 }
 
-function savePat(token) {
-  fs.mkdirSync(CONFIG_DIR, { recursive: true });
-  fs.writeFileSync(PAT_FILE, token.trim() + "\n", { mode: 0o600 });
+function savePat(token, region = "cn") {
+  const file = storedPatPath(region);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, token.trim() + "\n", { mode: 0o600 });
   try {
-    fs.chmodSync(PAT_FILE, 0o600);
+    fs.chmodSync(file, 0o600);
   } catch {
     /* ignore */
   }
 }
 
-function hasLogin() {
-  if (storedPat()) return true;
-  const user = path.join(os.homedir(), ".qoder-cn", ".auth", "user");
-  const mid = path.join(os.homedir(), ".qoder-cn", ".auth", "machine_id");
+function hasLogin(region = "cn") {
+  const regionId = normalizeRegion(region);
+  if (storedPat(regionId)) return true;
+  const paths = cliLoginPaths(regionId);
   try {
-    return fs.statSync(user).size > 8 && fs.statSync(mid).size > 4;
+    return fs.statSync(paths.user).size > 8 && fs.statSync(paths.machineId).size > 4;
   } catch {
     return false;
   }
@@ -309,9 +330,18 @@ function httpGet(url, timeout = 4000) {
   });
 }
 
-async function isHealthy(cfg = loadConfig()) {
+async function healthInfo(cfg = loadConfig()) {
   const r = await httpGet(`http://${cfg.host || DEFAULT_HOST}:${cfg.port || DEFAULT_PORT}/health`);
-  return r.status === 200;
+  if (r.status !== 200) return null;
+  try {
+    return JSON.parse(r.body);
+  } catch {
+    return { ok: true };
+  }
+}
+
+async function isHealthy(cfg = loadConfig()) {
+  return Boolean(await healthInfo(cfg));
 }
 
 function ensureDirs() {
@@ -354,6 +384,7 @@ Type=simple
 WorkingDirectory=${ROOT}
 Environment=QODER_CN_INFER_HOST=${cfg.host || DEFAULT_HOST}
 Environment=QODER_CN_INFER_PORT=${cfg.port || DEFAULT_PORT}
+Environment=QODER_CN_INFER_REGION=${normalizeRegion(cfg.region || "cn")}
 Environment=PATH=${path.dirname(node)}:/usr/bin:/bin
 ExecStart=${node} ${server}
 Restart=always
@@ -462,18 +493,19 @@ function stopNohup() {
   }
 }
 
-function ensureQoderCli(yes) {
-  if (which("qoderclicn") || which("qodercn")) return { ok: true, path: which("qoderclicn") || which("qodercn") };
+function ensureQoderCli(yes, { name = "qoderclicn", pkg = "@qodercn-ai/qoderclicn", alt = "qodercn" } = {}) {
+  const found = which(name) || (alt ? which(alt) : "");
+  if (found) return { ok: true, path: found };
   const npm = which("npm");
   if (!npm) return { ok: false, error: "npm not found; install Node.js 18+" };
-  const r = spawnSync(npm, ["install", "-g", "@qodercn-ai/qoderclicn"], {
+  const r = spawnSync(npm, ["install", "-g", pkg], {
     encoding: "utf8",
     timeout: 180000,
   });
   if (r.status !== 0) {
     return { ok: false, error: (r.stderr || r.stdout || "npm install failed").slice(0, 400) };
   }
-  return { ok: true, path: which("qoderclicn") || "qoderclicn", installed: true };
+  return { ok: true, path: which(name) || name, installed: true };
 }
 
 function waitEnter(yes, prompt) {
@@ -494,9 +526,10 @@ function hermesProfilesDir() {
 }
 
 function hermesProviderBlock(cfg) {
+  const label = endpointsFor(cfg.region || "cn").label;
   return `
   qoder-cn-infer:
-    name: Qoder CN
+    name: ${label}
     base_url: ${endpoint(cfg)}
     api_key: not-used
     transport: chat_completions
@@ -710,7 +743,7 @@ function wireOpenCode(cfg) {
   obj.provider = obj.provider || {};
   obj.provider["qoder-cn-infer"] = {
     npm: "@ai-sdk/openai-compatible",
-    name: "Qoder CN",
+    name: endpointsFor(cfg.region || "cn").label,
     options: { baseURL: endpoint(cfg), apiKey: "not-used" },
     models: {
       "qwen3.8-max": { name: "Qwen3.8-Max (0.5x credits)" },
@@ -730,11 +763,17 @@ async function cmdDoctor(args) {
   const checks = [];
   const nodeOk = Number(process.versions.node.split(".")[0]) >= 18;
   checks.push({ id: "node", ok: nodeOk, detail: `v${process.versions.node}` });
-  const cli = which("qoderclicn") || which("qodercn");
-  checks.push({ id: "qoderclicn", ok: Boolean(cli), detail: cli || "not found" });
-  const login = hasLogin();
+  const health = await healthInfo(cfg);
+  const healthy = Boolean(health);
+  const region = health?.region ? normalizeRegion(health.region) : resolveRegion(args.region);
+  const label = endpointsFor(region).label;
+  const def = REGION_DEFS[region];
+  const regionCli =
+    region === "global" ? which("qodercli") : which("qoderclicn") || which("qodercn");
+  checks.push({ id: def.cliName, ok: Boolean(regionCli), detail: regionCli || "not found" });
+  const login = hasLogin(region);
+  checks.push({ id: "region", ok: true, detail: `${region} (${label})` });
   checks.push({ id: "login", ok: login, detail: login ? "signed in" : "not signed in" });
-  const healthy = await isHealthy(cfg);
   checks.push({
     id: "api",
     ok: healthy,
@@ -769,29 +808,43 @@ async function cmdDoctor(args) {
 
 async function cmdStatus(args) {
   const cfg = loadConfig();
-  const healthy = await isHealthy(cfg);
-  const out = { running: healthy, endpoint: endpoint(cfg), login: hasLogin() };
+  const health = await healthInfo(cfg);
+  const running = Boolean(health);
+  const region = health?.region ? normalizeRegion(health.region) : resolveRegion(args.region);
+  const label = endpointsFor(region).label;
+  const login = hasLogin(region);
+  const out = { running, endpoint: endpoint(cfg), login, region, label };
   if (args.json) {
     jsonOut(out);
-    return healthy ? 0 : 1;
+    return running ? 0 : 1;
   }
-  console.log(healthy ? c.ok(`running  ${endpoint(cfg)}`) : c.bad("not running"));
-  console.log(hasLogin() ? c.ok("login    signed in") : c.skip("login    missing (qoder-cn-infer login)"));
+  console.log(running ? c.ok(`running  ${endpoint(cfg)}`) : c.bad("not running"));
+  console.log(c.dim(`region   ${region} (${label})`));
+  console.log(
+    login
+      ? c.ok("login    signed in")
+      : c.skip(`login    missing (qoder-cn-infer login${region === "cn" ? "" : ` --region ${region}`})`)
+  );
   console.log(c.dim("usage    qoder-cn-infer usage  (credits · tokens)"));
-  return healthy ? 0 : 1;
+  return running ? 0 : 1;
 }
 
 async function cmdStart(args) {
-  const cfg = { ...loadConfig(), host: args.host, port: args.port, root: ROOT };
+  const existing = loadConfig();
+  const region = resolveRegion(args.region || existing.region);
+  const cfg = { ...existing, host: args.host, port: args.port, root: ROOT, region };
   saveConfig(cfg);
   if (await isHealthy(cfg)) {
-    if (args.json) jsonOut({ ok: true, already: true, endpoint: endpoint(cfg) });
+    if (args.json) jsonOut({ ok: true, already: true, endpoint: endpoint(cfg), region });
     else console.log(c.ok(`already running  ${endpoint(cfg)}`));
     return 0;
   }
-  if (!hasLogin()) {
-    if (args.json) jsonOut({ ok: false, error: "not_logged_in" });
-    else console.log(c.bad("not signed in. run  qoder-cn-infer login"));
+  if (!hasLogin(region)) {
+    if (args.json) jsonOut({ ok: false, error: "not_logged_in", region });
+    else
+      console.log(
+        "  " + c.bad(`not signed in. run  qoder-cn-infer login${region === "cn" ? "" : ` --region ${region}`}`)
+      );
     return 2;
   }
   writeUnit(cfg);
@@ -803,7 +856,7 @@ async function cmdStart(args) {
     await new Promise((r) => setTimeout(r, 200));
   }
   const ok = await isHealthy(cfg);
-  if (args.json) jsonOut({ ok, how, endpoint: endpoint(cfg) });
+  if (args.json) jsonOut({ ok, how, endpoint: endpoint(cfg), region });
   else console.log(ok ? c.ok(`started (${how})  ${endpoint(cfg)}`) : c.bad("failed to start — qoder-cn-infer doctor"));
   return ok ? 0 : 1;
 }
@@ -820,14 +873,21 @@ async function chooseLoginMethod(args) {
   if (args.pat || args.token) return "pat";
   if (args.browser) return "browser";
   if (args.yes) {
-    if (storedPat() || process.env.QODERCN_PERSONAL_ACCESS_TOKEN || process.env.QODER_PAT) return "pat";
+    const region = resolveRegion(args.region);
+    if (
+      storedPat(region) ||
+      REGION_DEFS[region].patEnvVars.some((n) => (process.env[n] || "").trim())
+    ) {
+      return "pat";
+    }
     return "browser";
   }
+  const def = REGION_DEFS[resolveRegion(args.region)];
   const idx = await radioChoice(
     "How do you want to sign in?",
     [
-      { label: "Browser", hint: "qoderclicn login · recommended" },
-      { label: "PAT", hint: "token from qoder.cn/account/integrations" },
+      { label: "Browser", hint: `${def.cliName} login · recommended` },
+      { label: "PAT", hint: `token from ${def.patHintUrl}` },
     ],
     0
   );
@@ -835,60 +895,92 @@ async function chooseLoginMethod(args) {
 }
 
 function loginBrowser(args) {
-  const bin = which("qoderclicn") || which("qodercn");
+  const region = resolveRegion(args.region);
+  const def = REGION_DEFS[region];
+  const bin =
+    region === "global" ? which("qodercli") : which("qoderclicn") || which("qodercn");
   if (!bin) {
-    if (args.json) jsonOut({ ok: false, error: "qoderclicn_missing" });
-    else console.log("  " + c.bad("qoderclicn not installed — run  qoder-cn-infer setup"));
+    if (args.json) jsonOut({ ok: false, error: `${def.cliName}_missing`, region });
+    else
+      console.log(
+        "  " +
+          c.bad(
+            `${def.cliName} not installed — run  qoder-cn-infer setup  or use  --pat --region ${region}`
+          )
+      );
     return 1;
   }
   if (!args.json) {
-    console.log("  " + c.dim("Opening the Qoder CN browser sign-in…"));
-    console.log("  " + c.dim("If nothing opens:  qoderclicn login"));
+    console.log("  " + c.dim(`Opening the ${def.label} browser sign-in…`));
+    console.log("  " + c.dim(`If nothing opens:  ${def.cliName} login`));
     console.log("");
   }
   const r = spawnSync(bin, ["login"], { stdio: args.json ? "pipe" : "inherit" });
-  const ok = hasLogin();
-  if (args.json) jsonOut({ ok, method: "browser", status: r.status });
-  else console.log("  " + (ok ? c.ok("signed in with browser") : c.skip("not detected yet — finish the page, then  qoder-cn-infer doctor")));
+  const ok = hasLogin(region);
+  if (args.json) jsonOut({ ok, method: "browser", region, status: r.status });
+  else
+    console.log(
+      "  " +
+        (ok
+          ? c.ok(`signed in with browser (${def.label})`)
+          : c.skip("not detected yet — finish the page, then  qoder-cn-infer doctor"))
+    );
   return ok ? 0 : 2;
 }
 
 async function loginPat(args) {
-  let token = (args.token || storedPat()).trim();
+  const region = resolveRegion(args.region);
+  const def = REGION_DEFS[region];
+  let token = (args.token || storedPat(region)).trim();
   if (!token && !args.yes) {
-    printInfo("Create a token at  https://qoder.cn/account/integrations", null);
+    printInfo(`Create a token at  ${def.patHintUrl}`, null);
     token = await wizardReadLine({
       hidden: true,
       prompt: ui.yellow("  Paste PAT: "),
     });
   }
   if (!token) {
-    if (args.json) jsonOut({ ok: false, error: "pat_missing" });
-    else console.log("  " + c.bad("no token. set QODERCN_PERSONAL_ACCESS_TOKEN or pass --token"));
+    if (args.json) jsonOut({ ok: false, error: "pat_missing", region });
+    else console.log("  " + c.bad(`no token. set ${def.patEnvVars[0]} or pass --token`));
     return 2;
   }
   if (!/^pt-/.test(token) && token.length < 20) {
-    if (args.json) jsonOut({ ok: false, error: "pat_invalid" });
+    if (args.json) jsonOut({ ok: false, error: "pat_invalid", region });
     else console.log("  " + c.bad("that does not look like a Qoder PAT (usually starts with pt-)"));
     return 1;
   }
-  savePat(token);
-  process.env.QODERCN_PERSONAL_ACCESS_TOKEN = token;
-  if (args.json) jsonOut({ ok: true, method: "pat" });
-  else console.log("  " + c.ok("PAT stored in  ~/.config/qoder-cn-infer/pat  (mode 600)"));
+  savePat(token, region);
+  const cfg = loadConfig();
+  cfg.region = region;
+  saveConfig(cfg);
+  process.env[def.patEnvVars[0]] = token;
+  if (args.json) jsonOut({ ok: true, method: "pat", region });
+  else {
+    console.log("  " + c.ok(`PAT stored in  ${storedPatPath(region)}  (mode 600)`));
+    console.log("  " + c.dim(`region    ${region} (${def.label})`));
+    console.log("  " + c.dim("the API uses it on its next start:  qoder-cn-infer start"));
+  }
   return 0;
 }
 
 async function cmdLogin(args) {
   if (!args.json && !args.fromSetup) {
-    printBanner("Sign in", "Browser (qoderclicn login) or a personal access token.");
+    printBanner("Sign in", "Official CLI browser login or a personal access token.");
   }
   const method = await chooseLoginMethod(args);
   if (method === "pat") return loginPat(args);
-  if (!which("qoderclicn") && !which("qodercn")) {
-    const cli = ensureQoderCli(args.yes);
+  const region = resolveRegion(args.region);
+  const present =
+    region === "global"
+      ? Boolean(which("qodercli"))
+      : Boolean(which("qoderclicn") || which("qodercn"));
+  if (!present) {
+    const cli =
+      region === "global"
+        ? ensureQoderCli(args.yes, { name: "qodercli", pkg: "@qoder-ai/qodercli", alt: "" })
+        : ensureQoderCli(args.yes);
     if (!cli.ok) {
-      if (args.json) jsonOut({ ok: false, error: "qoderclicn", detail: cli.error });
+      if (args.json) jsonOut({ ok: false, error: REGION_DEFS[region].cliName, detail: cli.error });
       else console.log("  " + c.bad(cli.error));
       return 1;
     }
@@ -897,16 +989,18 @@ async function cmdLogin(args) {
 }
 
 function cmdLogout(args) {
+  const region = resolveRegion(args.region);
+  const def = REGION_DEFS[region];
   try {
-    fs.unlinkSync(PAT_FILE);
+    fs.unlinkSync(storedPatPath(region));
   } catch {
     /* ignore */
   }
-  if (args.json) jsonOut({ ok: true });
+  if (args.json) jsonOut({ ok: true, region });
   else {
     printBanner("Logout");
-    console.log("  " + c.ok("stored PAT removed"));
-    console.log("  " + c.dim("qoderclicn browser login was not touched"));
+    console.log("  " + c.ok(`stored PAT removed (${region})`));
+    console.log("  " + c.dim(`${def.cliName} browser login was not touched`));
     console.log("");
   }
   return 0;
@@ -965,16 +1059,19 @@ function fmtDateTime(ms) {
 }
 
 /**
- * Collect the usage picture: live account quota from the running API (or a
- * direct login fetch when the API is down) plus the local meter from disk.
+ * Collect the usage picture: live account quota (from the running API for its
+ * region, or a direct login fetch when the API is down or --region picks a
+ * different region) plus the local meter from disk.
  */
 async function collectUsage(args = {}) {
   const cfg = loadConfig();
+  const explicit = args.region ? parseRegion(args.region) : "";
   const healthy = await isHealthy(cfg);
   let account = null;
   let accountError = null;
   let local = null;
   let source = "file";
+  let serverRegion = null;
   if (healthy) {
     const params = [];
     if (args.refresh) params.push("refresh=1");
@@ -987,36 +1084,54 @@ async function collectUsage(args = {}) {
     if (r.status === 200) {
       try {
         const data = JSON.parse(r.body);
-        account = data.account || null;
-        accountError = data.account_error || null;
+        serverRegion = parseRegion(data.region) || "cn";
+        if (!explicit) {
+          account = data.account || null;
+          accountError = data.account_error || null;
+        }
         local = data.local || null;
         source = data.source || "server";
       } catch {
         accountError = "bad /usage response from server";
       }
     } else {
-      accountError = r.error || `HTTP ${r.status}`;
+      // Server 500s carry the real reason in {error:{message}} — surface it
+      // instead of a bare "HTTP 500".
+      let detail = "";
+      try {
+        detail = JSON.parse(r.body)?.error?.message || "";
+      } catch {
+        /* not JSON */
+      }
+      accountError = r.error || detail || `HTTP ${r.status}`;
     }
   }
   if (!local) local = usageSummary();
-  if (!account && !accountError && !args.localOnly && hasLogin()) {
-    try {
-      const id = await resolveIdentity();
-      const sess = buildSession(id.identity, id.machineId, id.machineToken, id.machineType);
-      account = await fetchAccountUsage(sess);
-      source = "direct";
-    } catch (e) {
-      accountError = String(e?.message || e);
+
+  const region = explicit || serverRegion || resolveRegion();
+  const label = endpointsFor(region).label;
+  if (!args.localOnly && !account && !accountError) {
+    if (hasLogin(region)) {
+      try {
+        const id = await resolveIdentity(undefined, { region });
+        const sess = buildSession(id.identity, id.machineId, id.machineToken, id.machineType);
+        account = await fetchAccountUsage(sess, undefined, { region });
+        source = "direct";
+      } catch (e) {
+        accountError = String(e?.message || e);
+      }
+    } else {
+      accountError = `not signed in for ${label} — qoder-cn-infer login${region === "cn" ? "" : ` --region ${region}`}`;
     }
   }
-  return { account, accountError, local, source, healthy, endpoint: endpoint(cfg), cfg };
+  return { account, accountError, local, source, healthy, endpoint: endpoint(cfg), cfg, region, label };
 }
 
 /**
  * Compact one-screen usage text: chat relays, quick commands, cron.
  * Plain lines, no ANSI, no banner.
  */
-function formatUsagePlain({ account, accountError, local, source, endpoint: ep } = {}) {
+function formatUsagePlain({ account, accountError, local, source, endpoint: ep, label = "Qoder CN" } = {}) {
   const lines = [];
   const u = account?.qoderUsage;
   if (u) {
@@ -1024,10 +1139,10 @@ function formatUsagePlain({ account, accountError, local, source, endpoint: ep }
     const pct = (Number(u.totalUsagePercentage) || 0) * 100;
     if (q) {
       lines.push(
-        `Qoder CN credits: ${fmtQuotaNumber(q.used)}/${fmtQuotaNumber(q.total)} used (${pct.toFixed(1)}%) · ${fmtQuotaNumber(q.remaining)} ${q.unit || "credits"} remaining`
+        `${label} credits: ${fmtQuotaNumber(q.used)}/${fmtQuotaNumber(q.total)} used (${pct.toFixed(1)}%) · ${fmtQuotaNumber(q.remaining)} ${q.unit || "credits"} remaining`
       );
     } else {
-      lines.push(`Qoder CN usage: ${pct.toFixed(1)}% of plan`);
+      lines.push(`${label} usage: ${pct.toFixed(1)}% of plan`);
     }
     if (u.expiresAt) {
       lines.push(`Resets ${fmtDateTime(u.expiresAt)} (${formatResetIn(u.expiresAt)}) · plan ${u.userType || "?"}`);
@@ -1058,13 +1173,16 @@ function formatUsagePlain({ account, accountError, local, source, endpoint: ep }
  * and the local meter of everything this facade served.
  */
 async function cmdUsage(args) {
-  const { account, accountError, local, source, healthy, cfg } = await collectUsage(args);
+  const { account, accountError, local, source, healthy, cfg, region, label } =
+    await collectUsage(args);
   if (args.json) {
     jsonOut({
       ok: true,
       account,
       account_error: accountError,
       source,
+      region,
+      label,
       local,
       endpoint: endpoint(cfg),
       server_running: healthy,
@@ -1073,13 +1191,13 @@ async function cmdUsage(args) {
   }
   if (args.plain) {
     console.log(
-      formatUsagePlain({ account, accountError, local, source, endpoint: endpoint(cfg) })
+      formatUsagePlain({ account, accountError, local, source, endpoint: endpoint(cfg), label })
     );
     return 0;
   }
 
-  printBanner("Usage", "Qoder CN account quota and what the facade has served.");
-  printHeader("Qoder CN account");
+  printBanner("Usage", `${label} account quota and what the facade has served.`);
+  printHeader(`${label} account`);
   if (args.localOnly) {
     console.log("  " + c.skip("skipped (--local)"));
   } else if (account?.displayMode === "enterprise") {
@@ -1167,19 +1285,26 @@ async function cmdUsage(args) {
  * Qoder isn't offering a claim command for this account, it reports that.
  */
 async function cmdClaim(args) {
-  if (!hasLogin()) {
-    if (args.json) jsonOut({ ok: false, error: "not_logged_in" });
-    else console.log("  " + c.bad("not signed in — qoder-cn-infer login"));
+  const region = resolveRegion(args.region);
+  const label = endpointsFor(region).label;
+  if (!hasLogin(region)) {
+    if (args.json) jsonOut({ ok: false, error: "not_logged_in", region });
+    else
+      console.log(
+        "  " +
+          c.bad(`not signed in — qoder-cn-infer login${region === "cn" ? "" : ` --region ${region}`}`)
+      );
     return 2;
   }
   let status;
   try {
-    const id = await resolveIdentity();
+    const id = await resolveIdentity(undefined, { region });
     const sess = buildSession(id.identity, id.machineId, id.machineToken, id.machineType);
-    status = await claimStatus(sess);
+    status = await claimStatus(sess, undefined, { region });
     let result = null;
     if (status.offered) {
       result = await runClaim(status.def, sess, {
+        region,
         log: (m) => {
           if (!args.json) console.log(c.dim(`  ${m}`));
         },
@@ -1188,6 +1313,7 @@ async function cmdClaim(args) {
     if (args.json) {
       jsonOut({
         ok: status.offered ? Boolean(result?.ok) : true,
+        region,
         offered: status.offered,
         campaigns: status.campaigns,
         claimed: result?.claimed ?? [],
@@ -1199,8 +1325,8 @@ async function cmdClaim(args) {
       });
       return 0;
     }
-    printBanner("Claim", "Qoder CN promo / activity credits.");
-    printHeader("Qoder CN claim");
+    printBanner("Claim", `${label} promo / activity credits.`);
+    printHeader(`${label} claim`);
     if (!status.offered) {
       console.log(`  ${c.dim("Offered   ")}  ${c.skip("nothing to claim right now")}`);
       if (status.campaigns) {
@@ -1436,7 +1562,7 @@ async function cmdSetup(args) {
     return 1;
   }
 
-  const skipOfficialCli = Boolean(args.pat || args.token || storedPat());
+  const skipOfficialCli = Boolean(args.pat || args.token || storedPat(resolveRegion(args.region)));
   if (skipOfficialCli) {
     step("qoderclicn", true, "skipped · PAT login");
   } else {
@@ -1485,7 +1611,7 @@ async function cmdSetup(args) {
     const again = await promptYesNo("  Sign in again / switch method?", false);
     if (again) await cmdLogin({ ...args, json: false, fromSetup: true });
   }
-  step("login", true, storedPat() ? "PAT" : "browser");
+  step("login", true, storedPat(resolveRegion(args.region)) ? "PAT" : "browser");
 
   printHeader("Local API");
   printInfo("Starts on 127.0.0.1 and restarts itself if it crashes.");
@@ -1618,6 +1744,10 @@ async function main() {
     if (args.json) jsonOut({ version: VERSION });
     else console.log(`qoder-cn-infer ${VERSION}`);
     return 0;
+  }
+  if (args.region && !parseRegion(args.region)) {
+    console.error(`unknown region: ${args.region} (expected cn or global)`);
+    return 1;
   }
   const table = {
     setup: cmdSetup,

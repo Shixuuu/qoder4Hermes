@@ -8,6 +8,7 @@
  * Never spawns a process; safe for the facade to call on every /usage request.
  */
 import { CN_OPENAPI, defaultHttpsRequest } from "./cn_cosy.mjs";
+import { endpointsFor } from "./regions.mjs";
 
 export const QUOTA_USAGE_URL = `${CN_OPENAPI}/api/v2/quota/usage`;
 export const USAGE_PRESENTATION_URL = `${CN_OPENAPI}/sash/api/v2/me/usage`;
@@ -168,9 +169,9 @@ async function getJson(url, token, httpsRequest) {
   });
 }
 
-export async function fetchQuotaUsage(sess, httpsRequest = defaultHttpsRequest) {
+export async function fetchQuotaUsage(sess, httpsRequest = defaultHttpsRequest, opts = {}) {
   const token = bearerOf(sess);
-  const res = await getJson(QUOTA_USAGE_URL, token, httpsRequest);
+  const res = await getJson(endpointsFor(opts.region).quotaUsageUrl, token, httpsRequest);
   if (res.status === 401) {
     const err = new Error("quota HTTP 401 — login expired, run  qoder-cn-infer login");
     err.status = 401;
@@ -191,14 +192,14 @@ export async function fetchQuotaUsage(sess, httpsRequest = defaultHttpsRequest) 
  * Returns {displayMode:"qoder", qoderUsage} or {displayMode:"enterprise", enterpriseUsage}.
  * Never throws for the personal path shape: falls back to /api/v2/quota/usage.
  */
-export async function fetchUsagePresentation(sess, httpsRequest = defaultHttpsRequest) {
+export async function fetchUsagePresentation(sess, httpsRequest = defaultHttpsRequest, opts = {}) {
   const orgId = sess?.identity?.organization_id || "";
   if (!orgId) {
-    return { displayMode: "qoder", qoderUsage: await fetchQuotaUsage(sess, httpsRequest) };
+    return { displayMode: "qoder", qoderUsage: await fetchQuotaUsage(sess, httpsRequest, opts) };
   }
   try {
     const token = bearerOf(sess);
-    const res = await getJson(USAGE_PRESENTATION_URL, token, httpsRequest);
+    const res = await getJson(endpointsFor(opts.region).usagePresentationUrl, token, httpsRequest);
     if (res.status === 200) {
       const raw = JSON.parse(res.body);
       const displayMode = pick(raw, ["displayMode"]);
@@ -223,12 +224,12 @@ export async function fetchUsagePresentation(sess, httpsRequest = defaultHttpsRe
   } catch {
     /* fall through to the credits quota */
   }
-  return { displayMode: "qoder", qoderUsage: await fetchQuotaUsage(sess, httpsRequest) };
+  return { displayMode: "qoder", qoderUsage: await fetchQuotaUsage(sess, httpsRequest, opts) };
 }
 
 /** Unified entry point used by /usage and the CLI. */
-export async function fetchAccountUsage(sess, httpsRequest = defaultHttpsRequest) {
-  const pres = await fetchUsagePresentation(sess, httpsRequest);
+export async function fetchAccountUsage(sess, httpsRequest = defaultHttpsRequest, opts = {}) {
+  const pres = await fetchUsagePresentation(sess, httpsRequest, opts);
   return { ...pres, fetchedAt: Date.now() };
 }
 

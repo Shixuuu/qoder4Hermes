@@ -63,6 +63,7 @@ If **login** is red, choose:
 
 1. **Browser** — official `qoderclicn login` (recommended)
 2. **PAT** — paste a token from [qoder.cn/account/integrations](https://qoder.cn/account/integrations)
+3. **Global (Qoder International)** — `qoder-cn-infer login --region global --pat` with a token from [qoder.com/account/integrations](https://qoder.com/account/integrations)
 
 Or later:
 
@@ -105,7 +106,29 @@ qoder-cn-infer telegram   # usage bot for Telegram (see below)
 qoder-cn-infer uninstall
 ```
 
-`-y` / `--yes` = no questions (for agents). `--json` = machine output.
+`-y` / `--yes` = no questions (for agents). `--json` = machine output. `--region <cn|global>` = which Qoder deployment to act on (default `cn`; see below).
+
+---
+
+## Qoder International (global)
+
+The same facade can serve **Qoder International** (the `qodercli` / `qoder.com` deployment) instead of Qoder CN. The regions are separate services with separate accounts — a CN PAT is rejected by the global token exchange and vice versa — so log into whichever region you want to serve:
+
+```bash
+qoder-cn-infer login --region global --pat --token pt-…   # token from https://qoder.com/account/integrations
+qoder-cn-infer status                                     # region: global (Qoder)
+qoder-cn-infer start                                      # (re)start the API on that region
+qoder-cn-infer usage --region global --plain              # one-off: global account numbers
+```
+
+What `--region global` changes:
+
+- Chat + model list: `https://api2.qoder.sh/algo/...` (the built-in default of Qoder's own global CLI; override with `QODER_CN_INFER_GLOBAL_INFER_HOST` or `global_infer_host` in `~/.config/qoder-cn-infer/config.json` — the official CLI may elect `api1`/`api2`/`api3` per network, this facade stays on the documented default)
+- Auth / quota / claim: `https://openapi.qoder.sh`; region election host: `https://center.qoder.sh`
+- Credentials: `~/.config/qoder-cn-infer/pat.global`, env `QODER_PERSONAL_ACCESS_TOKEN` / `QODER_PAT`, or the `qodercli` saved login (`~/.qoder/.auth/user`) when present
+- Everything else is identical: same gateway protocol and COSY signing, same paths, same model catalog, same local meter, same Hermes / OpenCode wiring
+
+Region resolution order everywhere: `--region` flag → `QODER_CN_INFER_REGION` → `config.json` `region` → `cn`. Browser login for global runs `qodercli login` (installs `@qoder-ai/qodercli` when missing); the PAT path is simpler.
 
 ---
 
@@ -249,7 +272,7 @@ MIT. Unofficial.
 
 Qoder CN does **not** publish a public OpenAI-compatible inference API. There is no supported `https://api.qoder.com.cn/v1/chat/completions`. Official custom models is BYOK **into** Qoder (the **opposite direction**). Cloud Agents at `https://api.qoder.com.cn/api/v1/cloud` is a hosted sandbox, not raw completions.
 
-This repo is a **local OpenAI-compatible HTTP** facade for `GET /v1/models` and `POST /v1/chat/completions` **without spawning** `qoderclicn` / `qodercn` / `qodercli` as the agent. Auth is `qoderclicn` login, `QODERCN_PERSONAL_ACCESS_TOKEN`, or `QODER_PAT`. CN: `qoder.com.cn`, `qoderclicn`, `api.qoder.com.cn`, `gateway.qoder.com.cn`. Global: `qoder.com`, `qodercli`, `api.qoder.com`.
+This repo is a **local OpenAI-compatible HTTP** facade for `GET /v1/models` and `POST /v1/chat/completions` **without spawning** `qoderclicn` / `qodercn` / `qodercli` as the agent. Auth is `qoderclicn` login, `QODERCN_PERSONAL_ACCESS_TOKEN`, or `QODER_PAT`. CN: `qoder.com.cn`, `qoderclicn`, `api.qoder.com.cn`, `gateway.qoder.com.cn`. Global: `qoder.com`, `qodercli`, `api.qoder.com` — the facade's `--region global` talks to the global deployment directly (`api2.qoder.sh` inference default, `center.qoder.sh`, `openapi.qoder.sh`), with `QODER_PERSONAL_ACCESS_TOKEN` or the `qodercli` login.
 
 Hermes:
 

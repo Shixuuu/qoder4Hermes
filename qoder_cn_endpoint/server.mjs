@@ -17,16 +17,20 @@ import {
 } from "./cn_complete.mjs";
 import { resolveIdentity } from "./cn_auth.mjs";
 import { defaultHttpsRequest } from "./cn_cosy.mjs";
+import { endpointsFor, resolveRegion } from "./regions.mjs";
 import { fetchAccountUsage } from "./quota.mjs";
 import { usageSummary } from "./usage_store.mjs";
 
 const host = process.env.QODER_CN_INFER_HOST || "127.0.0.1";
 const port = Number(process.env.QODER_CN_INFER_PORT || 8787);
+// Region for this process: QODER_CN_INFER_REGION → config.json region → cn.
+const region = resolveRegion();
+const ep = endpointsFor(region);
 
 let sessPromise = null;
 function getSess() {
   if (!sessPromise) {
-    sessPromise = resolveIdentity().then((id) =>
+    sessPromise = resolveIdentity(defaultHttpsRequest, { region }).then((id) =>
       buildSession(id.identity, id.machineId, id.machineToken, id.machineType)
     );
   }
@@ -110,7 +114,7 @@ export async function handleUsage(req, res, sess, deps = {}) {
       source = "cache";
     } else {
       try {
-        account = await fetchAccountUsage(sess, httpsRequest);
+        account = await fetchAccountUsage(sess, httpsRequest, { region: deps.region ?? region });
         accountCache.at = Date.now();
         accountCache.value = account;
         source = "live";
@@ -128,6 +132,8 @@ export async function handleUsage(req, res, sess, deps = {}) {
     account,
     account_error: accountError,
     source,
+    region,
+    label: endpointsFor(deps.region ?? region).label,
     local: usageSummary(),
     fetched_at: Date.now(),
   });
@@ -143,6 +149,7 @@ export async function handleChatCompletions(req, res, body, sess, deps = {}) {
       tool_choice: body.tool_choice,
       reasoning_effort: body.reasoning_effort,
       extra: body.extra_body,
+      region: deps.region ?? region,
       httpsRequest: deps.httpsRequest,
       httpsStream: deps.httpsStream,
     });
@@ -167,6 +174,7 @@ export async function handleChatCompletions(req, res, body, sess, deps = {}) {
       tool_choice: body.tool_choice,
       reasoning_effort: body.reasoning_effort,
       extra: body.extra_body,
+      region: deps.region ?? region,
       httpsRequest: deps.httpsRequest,
       httpsStream: deps.httpsStream,
     })) {
@@ -201,23 +209,29 @@ const server = http.createServer(async (req, res) => {
   const pathOnly = apiPath(url);
   try {
     if (req.method === "GET" && (pathOnly === "/health" || url === "/health")) {
-      send(res, 200, { ok: true, harness: "client", transport: "qoder-cn-gateway" });
+      send(res, 200, {
+        ok: true,
+        harness: "client",
+        transport: region === "global" ? "qoder-gateway" : "qoder-cn-gateway",
+        region,
+        label: ep.label,
+      });
       return;
     }
     if (req.method === "GET" && pathOnly === "/models") {
       const sess = await getSess();
-      send(res, 200, await openaiModelListLive(sess));
+      send(res, 200, await openaiModelListLive(sess, region));
       return;
     }
     if (req.method === "GET" && pathOnly === "/usage") {
       const sess = await getSess();
-      await handleUsage(req, res, sess);
+      await handleUsage(req, res, sess, { region });
       return;
     }
     if (req.method === "POST" && pathOnly === "/chat/completions") {
       const body = await readJson(req);
       const sess = await getSess();
-      await handleChatCompletions(req, res, body, sess);
+      await handleChatCompletions(req, res, body, sess, { region });
       return;
     }
     send(res, 404, { error: { message: `no ${req.method} ${url}` } });
@@ -256,7 +270,7 @@ if (isMain) {
   server.timeout = 0;
   server.keepAliveTimeout = 120000;
   server.listen(port, host, () => {
-    console.log(`qoder-cn inference facade http://${host}:${port}/v1`);
+    console.log(`qoder-cn inference facade http://${host}:${port}/v1  ${ep.label} (region ${region})`);
   });
 }
 

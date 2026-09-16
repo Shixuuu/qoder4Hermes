@@ -19,6 +19,7 @@
  * "Unknown skill" in that state).
  */
 import { CN_GATEWAY, CN_OPENAPI, defaultHttpsRequest } from "./cn_cosy.mjs";
+import { endpointsFor } from "./regions.mjs";
 
 export const QCS_RESOLVE_URL = `${CN_OPENAPI}/api/v1/qcs/config/resolve`;
 export const CAMPAIGNS_URL = `${CN_OPENAPI}/sash/api/v1/me/campaigns`;
@@ -53,10 +54,10 @@ async function postJson(url, token, body, httpsRequest) {
 }
 
 /** Fetch the CLI's feature-gate config; returns the namespace mapping ({} when empty). */
-export async function fetchFeatureGates(sess, httpsRequest = defaultHttpsRequest) {
+export async function fetchFeatureGates(sess, httpsRequest = defaultHttpsRequest, opts = {}) {
   const token = bearerOf(sess);
   const res = await postJson(
-    QCS_RESOLVE_URL,
+    endpointsFor(opts.region).qcsResolveUrl,
     token,
     { namespaces: [GATES_NAMESPACE], keys: [] },
     httpsRequest
@@ -69,9 +70,9 @@ export async function fetchFeatureGates(sess, httpsRequest = defaultHttpsRequest
   return isObj(configs) ? configs : {};
 }
 
-export async function fetchCampaigns(sess, httpsRequest = defaultHttpsRequest) {
+export async function fetchCampaigns(sess, httpsRequest = defaultHttpsRequest, opts = {}) {
   const token = bearerOf(sess);
-  const res = await httpsRequest("GET", CAMPAIGNS_URL, {
+  const res = await httpsRequest("GET", endpointsFor(opts.region).campaignsUrl, {
     headers: { accept: "application/json", authorization: `Bearer ${token}` },
     timeout: 20000,
   });
@@ -106,13 +107,15 @@ export function findClaimCommand(gates) {
 }
 
 /** Endpoint domain aliases (same mapping the CLI's resolveDomain uses). */
-export function resolveDomainBase(domain) {
+export function resolveDomainBase(domain, region = "cn") {
+  const ep = endpointsFor(region);
   switch (String(domain || "").trim().toLowerCase()) {
     case "inference":
+      return ep.inferBase;
     case "center":
-      return CN_GATEWAY;
+      return ep.centerBase;
     case "openapi":
-      return CN_OPENAPI;
+      return ep.openapiBase;
     default:
       return String(domain || "").replace(/\/+$/, "");
   }
@@ -142,7 +145,7 @@ function substituteDeep(value, ctx) {
  * Adds query.activityId when given (the CLI's withClaimActivityId transform).
  */
 export async function callEndpoint(def, ctx, { activityId, httpsRequest = defaultHttpsRequest } = {}) {
-  const base = resolveDomainBase(def.domain);
+  const base = resolveDomainBase(def.domain, ctx.region);
   const path = substituteTemplate(def.path || "", ctx);
   const url = new URL(path, base.endsWith("/") ? base : `${base}/`);
   const query = { ...(isObj(def.query) ? substituteDeep(def.query, ctx) : {}) };
@@ -218,10 +221,11 @@ async function fetchDetailPayloads(def, ctx, httpsRequest) {
  * Execute the claim for every claimable activity. Best-effort against the
  * server-delivered definition; every step's failure is reported, never hidden.
  */
-export async function runClaim(def, sess, { sessionId = "", httpsRequest = defaultHttpsRequest, log = () => {} } = {}) {
+export async function runClaim(def, sess, { sessionId = "", httpsRequest = defaultHttpsRequest, log = () => {}, region = "cn" } = {}) {
   const ctx = {
     token: bearerOf(sess),
     sessionId,
+    region,
     commandName: String(pick(def, ["name"]) ?? "claim"),
   };
   const detailPayloads = await fetchDetailPayloads(def, ctx, httpsRequest);
@@ -255,18 +259,18 @@ export async function runClaim(def, sess, { sessionId = "", httpsRequest = defau
  * One-call status used by the CLI / quick command.
  * Returns { offered, def, gates, campaigns, campaignsError }.
  */
-export async function claimStatus(sess, httpsRequest = defaultHttpsRequest) {
+export async function claimStatus(sess, httpsRequest = defaultHttpsRequest, opts = {}) {
   let gates = {};
   let gatesError = null;
   try {
-    gates = await fetchFeatureGates(sess, httpsRequest);
+    gates = await fetchFeatureGates(sess, httpsRequest, opts);
   } catch (e) {
     gatesError = String(e?.message || e);
   }
   let campaigns = null;
   let campaignsError = null;
   try {
-    campaigns = await fetchCampaigns(sess, httpsRequest);
+    campaigns = await fetchCampaigns(sess, httpsRequest, opts);
   } catch (e) {
     campaignsError = String(e?.message || e);
   }

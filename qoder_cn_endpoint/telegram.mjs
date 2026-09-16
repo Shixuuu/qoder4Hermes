@@ -81,8 +81,8 @@ export function parseCommand(text) {
  * Plain-text Telegram message for a collectUsage() result.
  * HTML parse mode: only <b> tags, everything else escaped.
  */
-export function renderUsageText(data, { endpoint = data?.endpoint || "" } = {}) {
-  const lines = ["<b>Qoder CN usage</b>", ""];
+export function renderUsageText(data, { endpoint = data?.endpoint || "", label = data?.label || "Qoder CN" } = {}) {
+  const lines = [`<b>${escapeHtml(label)} usage</b>`, ""];
   const account = data?.account;
   const accountError = data?.account_error;
   if (account?.displayMode === "enterprise") {
@@ -134,12 +134,13 @@ export function renderStatusText(status, { endpoint = "" } = {}) {
   const lines = ["<b>qoder-cn-infer status</b>", ""];
   lines.push(`API: ${status?.running ? "running" : "not running"}`);
   lines.push(`Login: ${status?.login ? "signed in" : "missing"}`);
+  if (status?.region) lines.push(`Region: ${escapeHtml(status.region)}${status?.label ? ` (${escapeHtml(status.label)})` : ""}`);
   if (endpoint) lines.push(escapeHtml(endpoint));
   return lines.join("\n");
 }
 
 export const COMMANDS_HELP =
-  "Commands: /usage · /status · /help\n\n/usage shows Qoder CN credits, the reset window, and the tokens this facade served.";
+  "Commands: /usage · /status · /help\n\n/usage shows your Qoder credits, the reset window, and the tokens this facade served.";
 
 /**
  * Stateful bot core. `state` is a plain object persisted by the caller
