@@ -418,7 +418,7 @@ test("wireHermesAt refreshes an existing qoder base_url in place", () => {
   assert.equal(profileIsWired(configPath), true);
 });
 
-test("wireHermesAt installs the /qoder quick command idempotently", () => {
+test("wireHermesAt installs the /qoder + /claim quick commands idempotently", () => {
   const dir = tmpDir();
   const configPath = path.join(dir, "config.yaml");
   fs.writeFileSync(configPath, "model:\n  default: x\n");
@@ -427,11 +427,13 @@ test("wireHermesAt installs the /qoder quick command idempotently", () => {
   const text1 = fs.readFileSync(configPath, "utf8");
   assert.match(text1, /quick_commands:/);
   assert.match(text1, /qoder-cn-infer usage --refresh/);
-  // Idempotent: wiring twice keeps exactly one quick command.
+  assert.match(text1, /qoder-cn-infer claim/);
+  // Idempotent: wiring twice keeps exactly one of each quick command.
   const r2 = wireHermesAt({ host: "127.0.0.1", port: 8787 }, configPath);
   assert.equal(r2.quick_command, false);
   const text2 = fs.readFileSync(configPath, "utf8");
   assert.equal(text2.split("qoder-cn-infer usage --refresh").length - 1, 1);
+  assert.equal(text2.split("qoder-cn-infer claim").length - 1, 1);
 });
 
 test("wireHermesAt merges into an existing quick_commands map without dropping entries", () => {
@@ -444,11 +446,9 @@ test("wireHermesAt merges into an existing quick_commands map without dropping e
   wireHermesAt({ host: "127.0.0.1", port: 8787 }, configPath);
   const text = fs.readFileSync(configPath, "utf8");
   assert.match(text, /deploy:/);
-  assert.match(text, /qoder:/);
+  assert.match(text, /\n  qoder:/);
+  assert.match(text, /\n  claim:/);
   assert.equal(text.split("quick_commands:").length - 1, 1);
-  // The qoder entry must be nested under the same map (indented).
-  const qIdx = text.indexOf("qoder:");
-  assert.match(text.slice(Math.max(0, qIdx - 4), qIdx), /\n  /);
 });
 
 test("detectHermesProfiles finds profiles and wireHermesProfiles wires them", () => {

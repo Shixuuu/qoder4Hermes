@@ -94,13 +94,14 @@ test("qoder-cn-infer help and version exit 0", () => {
   assert.equal(help.status, 0, help.stderr);
   assert.match(help.stdout, /qoder-cn-infer setup/);
   assert.match(help.stdout, /usage/);
+  assert.match(help.stdout, /claim/);
   assert.match(help.stdout, /--profiles/);
   assert.match(help.stdout, /telegram/);
   assert.doesNotMatch(help.stdout, /^qoder-cn \[OPTIONS\]/m);
   assert.match(help.stdout, /--yes/);
   const ver = spawnSync(process.execPath, [CLI, "version", "--json"], { encoding: "utf8" });
   assert.equal(ver.status, 0, ver.stderr);
-  assert.match(ver.stdout, /1\.3\.0/);
+  assert.match(ver.stdout, /1\.4\.0/);
 });
 
 test("CLI runs when invoked through the installed symlink shim", () => {
@@ -110,7 +111,7 @@ test("CLI runs when invoked through the installed symlink shim", () => {
     fs.symlinkSync(CLI, link);
     const r = spawnSync(process.execPath, [link, "version", "--json"], { encoding: "utf8" });
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stdout, /1\.3\.0/, "symlinked invocation must execute main()");
+    assert.match(r.stdout, /"version":\s*"\d+\.\d+\.\d+"/, "symlinked invocation must execute main()");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

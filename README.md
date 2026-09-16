@@ -98,6 +98,7 @@ qoder-cn-infer stop
 qoder-cn-infer status
 qoder-cn-infer models
 qoder-cn-infer usage      # credits, tokens, reset window
+qoder-cn-infer claim      # redeem Qoder promo/activity credits (the CLI's /claim)
 qoder-cn-infer wire       # rewrite Hermes / OpenCode config
                           #   --profiles · --profile <name> · --no-profiles
 qoder-cn-infer telegram   # usage bot for Telegram (see below)
@@ -130,6 +131,21 @@ The local side is a meter the server keeps from each completion's own usage even
   "local": { "totals": { "requests": 12, "total_tokens": 45231, "credits": 0.42 } }
 }
 ```
+
+---
+
+## Claim promo credits
+
+Qoder occasionally offers claimable credits (campaigns / activities). The official CLI's `/claim` is **server-driven**: it exists only while Qoder pushes a claim definition for your account, and disappears otherwise.
+
+This tool mirrors that behavior:
+
+```bash
+qoder-cn-infer claim          # checks what Qoder is offering; claims when there is something
+qoder-cn-infer claim --json
+```
+
+It reads the same feature-gate config the CLI polls (`POST https://openapi.qoder.com.cn/api/v1/qcs/config/resolve`) plus `GET https://openapi.qoder.com.cn/sash/api/v1/me/campaigns`. When a claim definition is live it runs the same flow as the CLI: the definition's `detail` endpoints list claimable activity ids, then each id is claimed via the definition's `interaction` endpoint with `?activityId=…`. When nothing is offered, it says so instead of pretending — that is the same state in which the CLI itself has no `/claim`.
 
 ---
 
@@ -183,16 +199,19 @@ qoder-cn-infer wire --no-profiles     # skip profiles entirely
 
 Wiring only adds the provider block to a profile's `config.yaml`; it never changes that profile's default model or provider, and profiles without a `config.yaml` are skipped and reported. `qoder-cn-infer doctor` shows the wired state of each profile.
 
-Every wired Hermes config also gets a **`/qoder` quick command** — a `quick_commands` exec entry that runs the usage CLI directly in the gateway, so `/qoder` in any Telegram chat with that bot replies with the usage report instantly and without an LLM turn:
+Every wired Hermes config also gets **`/qoder` and `/claim` quick commands** — `quick_commands` exec entries that run the CLI directly in the gateway, so they answer instantly and without an LLM turn:
 
 ```yaml
 quick_commands:
   qoder:
     type: exec
     command: "$HOME/.local/bin/qoder-cn-infer usage --refresh"
+  claim:
+    type: exec
+    command: "$HOME/.local/bin/qoder-cn-infer claim"
 ```
 
-Restart the gateway once after wiring to load it.
+Restart the gateway once after wiring to load them.
 
 To actually run a bot on your Qoder quota, switch that profile's model and restart its gateway:
 

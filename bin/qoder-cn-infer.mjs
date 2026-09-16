@@ -30,10 +30,11 @@ import { resolveIdentity } from "../qoder_cn_endpoint/cn_auth.mjs";
 import { buildSession } from "../qoder_cn_endpoint/cn_cosy.mjs";
 import { usageSummary, usagePath, formatCompact } from "../qoder_cn_endpoint/usage_store.mjs";
 import { createBot } from "../qoder_cn_endpoint/telegram.mjs";
+import { claimStatus, runClaim } from "../qoder_cn_endpoint/claim.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "..");
-const VERSION = "1.3.0";
+const VERSION = "1.4.0";
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 8787;
 const CONFIG_DIR = path.join(os.homedir(), ".config", "qoder-cn-infer");
@@ -188,6 +189,7 @@ function printHelp() {
   console.log(cmd("status", "Show endpoint and login"));
   console.log(cmd("models", "List models"));
   console.log(cmd("usage", "Credits, tokens, and reset window"));
+  console.log(cmd("claim", "Redeem Qoder promo credits (/claim)"));
   console.log(cmd("wire", "Write Hermes / OpenCode config"));
   console.log(cmd("telegram", "Usage bot for Telegram (/usage)"));
   console.log(cmd("uninstall", "Remove service and PATH shim"));
@@ -503,28 +505,45 @@ function hermesProviderBlock(cfg) {
 }
 
 /**
- * The /qoder Telegram quick command: runs the usage CLI directly in the
- * gateway process (no LLM turn, 30s cap) so `/qoder` replies instantly.
+ * Telegram quick commands: run the CLI directly in the gateway process
+ * (no LLM turn, 30s cap) so `/qoder` and `/claim` reply instantly.
  */
-const QUICK_COMMAND_CMD = '"$HOME/.local/bin/qoder-cn-infer usage --refresh"';
+const QUICK_COMMANDS = [
+  { name: "qoder", exec: "$HOME/.local/bin/qoder-cn-infer usage --refresh" },
+  { name: "claim", exec: "$HOME/.local/bin/qoder-cn-infer claim" },
+];
 
-function hermesQuickCommandMarker(pad = "") {
-  return `${pad}quick_commands:\n${pad}  qoder:\n${pad}    type: exec\n${pad}    command: ${QUICK_COMMAND_CMD}`;
+function quickCommandEntries(pad, entries) {
+  return entries
+    .map((qc) => `${pad}  ${qc.name}:\n${pad}    type: exec\n${pad}    command: "${qc.exec}"`)
+    .join("\n");
 }
 
-/** Merge the /qoder quick command into config text; returns {text, added}. */
+/** Merge the /qoder + /claim quick commands into config text; {text, added}. */
 function ensureQuickCommand(text) {
-  if (text.includes("qoder-cn-infer usage --refresh")) return { text, added: false };
+  const missing = QUICK_COMMANDS.filter((qc) => !text.includes(qc.exec));
+  if (!missing.length) return { text, added: false };
   let m = text.match(/^([ \t]*)quick_commands:[ \t]*\{[ \t]*\}[ \t]*$/m);
   if (m) {
-    return { text: text.replace(m[0], hermesQuickCommandMarker(m[1])), added: true };
+    const pad = m[1];
+    return {
+      text: text.replace(m[0], `${pad}quick_commands:\n${quickCommandEntries(pad, missing)}`),
+      added: true,
+    };
   }
   m = text.match(/^([ \t]*)quick_commands:[ \t]*$/m);
   if (m) {
-    // Replace just the key line; any existing entries stay below the new one.
-    return { text: text.replace(m[0], hermesQuickCommandMarker(m[1])), added: true };
+    // Replace just the key line; any existing entries stay below the new ones.
+    const pad = m[1];
+    return {
+      text: text.replace(m[0], `${pad}quick_commands:\n${quickCommandEntries(pad, missing)}`),
+      added: true,
+    };
   }
-  return { text: `${text.replace(/\s*$/, "")}\n\n${hermesQuickCommandMarker()}\n`, added: true };
+  return {
+    text: `${text.replace(/\s*$/, "")}\n\nquick_commands:\n${quickCommandEntries("", missing)}\n`,
+    added: true,
+  };
 }
 
 /**
@@ -542,7 +561,7 @@ function wireHermesAt(cfg, configPath, { setDefaultOnCreate = false } = {}) {
       : `# Hermes profile config — qoder-cn-infer provider (default model untouched)\n`;
     fs.writeFileSync(
       configPath,
-      `${head}providers:\n${block}\n${hermesQuickCommandMarker()}\n`
+      `${head}providers:\n${block}\nquick_commands:\n${quickCommandEntries("", QUICK_COMMANDS)}\n`
     );
     return { ok: true, path: configPath, created: true, quick_command: true };
   }
@@ -1136,6 +1155,81 @@ async function cmdUsage(args) {
   return 0;
 }
 
+/**
+ * Claim Qoder promo/activity credits (the CLI's /claim). Server-driven: when
+ * Qoder isn't offering a claim command for this account, it reports that.
+ */
+async function cmdClaim(args) {
+  if (!hasLogin()) {
+    if (args.json) jsonOut({ ok: false, error: "not_logged_in" });
+    else console.log("  " + c.bad("not signed in — qoder-cn-infer login"));
+    return 2;
+  }
+  let status;
+  try {
+    const id = await resolveIdentity();
+    const sess = buildSession(id.identity, id.machineId, id.machineToken, id.machineType);
+    status = await claimStatus(sess);
+    let result = null;
+    if (status.offered) {
+      result = await runClaim(status.def, sess, {
+        log: (m) => {
+          if (!args.json) console.log(c.dim(`  ${m}`));
+        },
+      });
+    }
+    if (args.json) {
+      jsonOut({
+        ok: status.offered ? Boolean(result?.ok) : true,
+        offered: status.offered,
+        campaigns: status.campaigns,
+        claimed: result?.claimed ?? [],
+        claimable: result?.claimable ?? [],
+        errors: result?.errors ?? [],
+        note: result?.note ?? null,
+        gates_error: status.gatesError,
+        campaigns_error: status.campaignsError,
+      });
+      return 0;
+    }
+    printBanner("Claim", "Qoder CN promo / activity credits.");
+    printHeader("Qoder CN claim");
+    if (!status.offered) {
+      console.log(`  ${c.dim("Offered   ")}  ${c.skip("nothing to claim right now")}`);
+      if (status.campaigns) {
+        const cs = status.campaigns;
+        console.log(
+          `  ${c.dim("Campaigns ")}  ${c.fg(cs.claimable ? "claimable" : "none active")}  ${c.dim(`· ${cs.count} campaign(s)`)}`
+        );
+        if (cs.campaignUrl) console.log(`  ${c.dim("Details   ")}  ${c.dim(cs.campaignUrl)}`);
+      }
+      if (status.gatesError) console.log(`  ${c.dim("Gates     ")}  ${c.dim(status.gatesError)}`);
+      if (status.campaignsError) console.log(`  ${c.dim("Campaigns ")}  ${c.dim(status.campaignsError)}`);
+      console.log("");
+      printInfo("Qoder only offers /claim while a promotion/activity is active for your account.", "When it appears, run this command (or /claim in Telegram) to redeem it.");
+    } else {
+      const claimed = result?.claimed ?? [];
+      if (claimed.length) {
+        console.log("  " + c.ok(`${claimed.length} activit${claimed.length === 1 ? "y" : "ies"} claimed`));
+      } else if (result?.note === "nothing_claimable") {
+        console.log("  " + c.skip("offered, but nothing claimable right now (already claimed or not eligible)"));
+      }
+      for (const err of result?.errors ?? []) console.log("  " + c.bad(err));
+      if (result && !result.ok && !claimed.length) {
+        printInfo("If this keeps failing, redeem via the official CLI: run  qoderclicn  then  /claim");
+      }
+    }
+    console.log("");
+    console.log(c.dim("usage      qoder-cn-infer usage --refresh   (see the credits move)"));
+    console.log("");
+    return 0;
+  } catch (e) {
+    if (args.json) jsonOut({ ok: false, error: String(e?.message || e) });
+    else console.log("  " + c.bad(String(e?.message || e)));
+    return 1;
+  }
+}
+
 function loadTelegramConfig() {
   try {
     return JSON.parse(fs.readFileSync(TG_CONFIG_PATH, "utf8"));
@@ -1296,7 +1390,7 @@ function cmdWire(args) {
   else {
     console.log(c.ok(`Hermes    ${h.path}`));
     if (h.quick_command) {
-      console.log(c.dim("          /qoder quick command added — restart the Hermes gateway to load it"));
+      console.log(c.dim("          /qoder + /claim quick commands added — restart the Hermes gateway to load them"));
     }
     console.log(c.ok(`OpenCode  ${o.path}`));
     if (profileResult) printProfileResults(profileResult);
@@ -1528,6 +1622,7 @@ async function main() {
     status: cmdStatus,
     models: cmdModels,
     usage: cmdUsage,
+    claim: cmdClaim,
     wire: cmdWire,
     telegram: cmdTelegram,
     uninstall: cmdUninstall,
