@@ -1,6 +1,6 @@
 {
   "name": "qoder-cn-infer",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Use your Qoder CN quota from Hermes, OpenCode, or any OpenAI-compatible client — without the Qoder CLI harness.",
   "type": "module",
   "bin": {

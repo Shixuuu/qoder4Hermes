@@ -132,6 +132,8 @@ The local side is a meter the server keeps from each completion's own usage even
 }
 ```
 
+**Context windows.** The live model list carries Qoder's selectable context windows per model (`context_config`): 200K (Qoder's web default), 400K, and 1M. The API advertises the largest window as `context_length` on `/v1/models` — 1M for every model that offers it, 200K for MiniMax-M2.7 — and includes the full list as `context_windows`. Window choice is a client-side budgeting concern (Qoder's own CLI never sends it in the chat request), so the facade reports the max instead of the stale legacy `max_input_tokens` (180K/96K, which is what used to cap everything at 180K).
+
 ---
 
 ## Claim promo credits

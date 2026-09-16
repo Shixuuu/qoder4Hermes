@@ -17,6 +17,10 @@ import {
   formatRate,
   displayLabel,
   resolveModelKey as catalogResolve,
+  normalizeChatRows,
+  parseContextWindows,
+  effectiveContextLength,
+  CHAT_FALLBACK,
 } from "../qoder_cn_endpoint/catalog.mjs";
 import { qoderDecode, CHAT_URL, MODEL_LIST_URL } from "../qoder_cn_endpoint/cn_cosy.mjs";
 import { decryptCliUserFile } from "../qoder_cn_endpoint/cn_auth.mjs";
@@ -618,4 +622,62 @@ test("extractImageParts and VL flag for native image messages", async () => {
   const decoded = qoderDecode(captured[0]).toString("utf8");
   assert.match(decoded, /data:image\/png;base64,aaa/);
   assert.match(decoded, /"is_vl":true/);
+});
+
+test("context windows: advertise the largest window from context_config", () => {
+  const row = {
+    key: "qmodel_38max",
+    display_name: "Qwen3.8-Max",
+    max_input_tokens: 180000,
+    context_config: {
+      "1M": { token_count: 1000000 },
+      "200K": { token_count: 200000, is_default: true },
+      "400K": { token_count: 400000 },
+    },
+  };
+  assert.deepEqual(parseContextWindows(row), {
+    windows: [200000, 400000, 1000000],
+    default: 200000,
+  });
+  assert.equal(effectiveContextLength(row), 1000000);
+
+  const rows = normalizeChatRows({ chat: [row] });
+  assert.equal(rows[0].max_input_tokens, 1000000);
+  assert.deepEqual(rows[0].context_windows.windows, [200000, 400000, 1000000]);
+
+  const list = openaiListFromGateway({ chat: [row] });
+  const q38 = list.data.find((m) => m.id === "qwen3.8-max");
+  assert.equal(q38.context_length, 1000000);
+  assert.deepEqual(q38.context_windows, {
+    windows: [200000, 400000, 1000000],
+    default: 200000,
+  });
+});
+
+test("context windows: policy default, available_context_windows, and the MiniMax cap", () => {
+  // No window info (auto row): the 1M policy default applies, not the stale 180K.
+  assert.equal(effectiveContextLength({ key: "auto", max_input_tokens: 180000 }), 1000000);
+  // available_context_windows lists are honored as a fallback shape.
+  assert.deepEqual(
+    parseContextWindows({ available_context_windows: [128000, 200000, 1000000] }),
+    { windows: [128000, 200000, 1000000] }
+  );
+  // MiniMax exposes only a 200K window; the configured window wins over legacy values.
+  const mm = {
+    key: "mmodel",
+    max_input_tokens: 180000,
+    context_config: { "200K": { token_count: 200000, is_default: true } },
+  };
+  assert.equal(effectiveContextLength(mm), 200000);
+});
+
+test("context windows: fallback catalog advertises 1M and routing tiers carry context", () => {
+  const byKey = Object.fromEntries(CHAT_FALLBACK.map((r) => [r.key, r]));
+  assert.equal(byKey.auto.max_input_tokens, 1000000);
+  assert.equal(byKey.mmodel.max_input_tokens, 200000);
+  const list = openaiListFromGateway({});
+  const auto = list.data.find((m) => m.id === "auto");
+  const lite = list.data.find((m) => m.id === "lite");
+  assert.equal(auto.context_length, 1000000);
+  assert.equal(lite.context_length, 1000000);
 });

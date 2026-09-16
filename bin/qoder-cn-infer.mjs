@@ -34,7 +34,7 @@ import { claimStatus, runClaim } from "../qoder_cn_endpoint/claim.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "..");
-const VERSION = "1.4.0";
+const VERSION = "1.5.0";
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 8787;
 const CONFIG_DIR = path.join(os.homedir(), ".config", "qoder-cn-infer");
@@ -925,10 +925,17 @@ async function cmdModels(args) {
   else {
     for (const m of data.data || []) {
       const rate = m.rate ? c.dim(`  ${m.rate}`) : "";
-      console.log(`${c.bold(m.id)}${rate}  ${m.name || ""}`);
+      const ctx = m.context_length ? c.dim(`  ${fmtCtx(m.context_length)}`) : "";
+      console.log(`${c.bold(m.id)}${rate}${ctx}  ${m.name || ""}`);
     }
   }
   return 0;
+}
+
+function fmtCtx(n) {
+  const v = Number(n) || 0;
+  if (v >= 1000000) return `${Math.round(v / 100000) / 10}M`;
+  return `${Math.round(v / 1000)}K`;
 }
 
 function fmtCredits(n) {
