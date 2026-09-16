@@ -15,6 +15,9 @@ import {
   streamOpenAiSse,
 } from "./cn_complete.mjs";
 import { resolveIdentity } from "./cn_auth.mjs";
+import { defaultHttpsRequest } from "./cn_cosy.mjs";
+import { fetchAccountUsage } from "./quota.mjs";
+import { usageSummary } from "./usage_store.mjs";
 
 const host = process.env.QODER_CN_INFER_HOST || "127.0.0.1";
 const port = Number(process.env.QODER_CN_INFER_PORT || 8787);
@@ -80,6 +83,53 @@ function send(res, status, obj) {
     "content-length": Buffer.byteLength(body),
   });
   res.end(body);
+}
+
+const USAGE_CACHE_TTL_MS = Number(process.env.QODER_CN_INFER_USAGE_TTL_MS || 60000);
+const accountCache = { at: 0, value: null };
+
+/**
+ * GET /usage (also /v1/usage) — account quota (credits, reset, tokens policy)
+ * plus the local meter of what this facade has served.
+ *   ?refresh=1  bypass the 60s account cache
+ *   ?local=1    skip the Qoder call entirely
+ */
+export async function handleUsage(req, res, sess, deps = {}) {
+  const url = new URL(req.url || "/usage", "http://localhost");
+  const refresh = url.searchParams.get("refresh") === "1";
+  const localOnly = url.searchParams.get("local") === "1";
+  const httpsRequest = deps.httpsRequest || defaultHttpsRequest;
+  let account = null;
+  let accountError = null;
+  let source = "local";
+  if (!localOnly) {
+    const stale = refresh || Date.now() - accountCache.at > USAGE_CACHE_TTL_MS;
+    if (!stale && accountCache.value) {
+      account = accountCache.value;
+      source = "cache";
+    } else {
+      try {
+        account = await fetchAccountUsage(sess, httpsRequest);
+        accountCache.at = Date.now();
+        accountCache.value = account;
+        source = "live";
+      } catch (e) {
+        accountError = String(e?.message || e);
+        if (accountCache.value) {
+          account = accountCache.value;
+          source = "cache";
+        }
+      }
+    }
+  }
+  send(res, 200, {
+    ok: true,
+    account,
+    account_error: accountError,
+    source,
+    local: usageSummary(),
+    fetched_at: Date.now(),
+  });
 }
 
 export async function handleChatCompletions(req, res, body, sess, deps = {}) {
@@ -156,6 +206,11 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && pathOnly === "/models") {
       const sess = await getSess();
       send(res, 200, await openaiModelListLive(sess));
+      return;
+    }
+    if (req.method === "GET" && pathOnly === "/usage") {
+      const sess = await getSess();
+      await handleUsage(req, res, sess);
       return;
     }
     if (req.method === "POST" && pathOnly === "/chat/completions") {

@@ -25,10 +25,14 @@ import {
   readLine as wizardReadLine,
   ui,
 } from "./wizard.mjs";
+import { fetchAccountUsage, formatResetIn } from "../qoder_cn_endpoint/quota.mjs";
+import { resolveIdentity } from "../qoder_cn_endpoint/cn_auth.mjs";
+import { buildSession } from "../qoder_cn_endpoint/cn_cosy.mjs";
+import { usageSummary, usagePath, formatCompact } from "../qoder_cn_endpoint/usage_store.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "..");
-const VERSION = "1.0.0";
+const VERSION = "1.1.0";
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 8787;
 const CONFIG_DIR = path.join(os.homedir(), ".config", "qoder-cn-infer");
@@ -81,6 +85,17 @@ function parseArgs(argv) {
     browser: false,
     pat: false,
     token: "",
+    profiles: [],
+    allProfiles: false,
+    noProfiles: false,
+    refresh: false,
+    localOnly: false,
+  };
+  const addProfiles = (v) => {
+    for (const s of String(v || "").split(",")) {
+      const name = s.trim();
+      if (name && !args.profiles.includes(name)) args.profiles.push(name);
+    }
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -96,6 +111,12 @@ function parseArgs(argv) {
     else if (a === "--port") args.port = Number(argv[++i] || DEFAULT_PORT);
     else if (a.startsWith("--host=")) args.host = a.slice(7);
     else if (a.startsWith("--port=")) args.port = Number(a.slice(7));
+    else if (a === "--profile") addProfiles(argv[++i] || "");
+    else if (a.startsWith("--profile=")) addProfiles(a.slice(10));
+    else if (a === "--profiles" || a === "--all-profiles") args.allProfiles = true;
+    else if (a === "--no-profiles") args.noProfiles = true;
+    else if (a === "--refresh") args.refresh = true;
+    else if (a === "--local") args.localOnly = true;
     else if (!a.startsWith("-")) args._.push(a);
   }
   if (process.env.QODER_CN_YES === "1") args.yes = true;
@@ -146,6 +167,7 @@ function printHelp() {
   console.log(cmd("stop", "Stop the local API"));
   console.log(cmd("status", "Show endpoint and login"));
   console.log(cmd("models", "List models"));
+  console.log(cmd("usage", "Credits, tokens, and reset window"));
   console.log(cmd("wire", "Write Hermes / OpenCode config"));
   console.log(cmd("uninstall", "Remove service and PATH shim"));
   console.log("");
@@ -158,6 +180,11 @@ function printHelp() {
   console.log(`    ${c.mag("-y, --yes")}              ${c.dim("no prompts (agents)")}`);
   console.log(`    ${c.mag("--json")}                 ${c.dim("machine-readable")}`);
   console.log(`    ${c.mag("--host --port")}          ${c.dim("bind address (default 127.0.0.1:8787)")}`);
+  console.log(`    ${c.mag("--profiles")}             ${c.dim("wire every Hermes bot profile")}`);
+  console.log(`    ${c.mag("--profile")} ${c.dim("<name>")}       ${c.dim("wire one profile (repeatable)")}`);
+  console.log(`    ${c.mag("--no-profiles")}          ${c.dim("never touch Hermes profiles")}`);
+  console.log(`    ${c.mag("--refresh")}              ${c.dim("usage: bypass account cache")}`);
+  console.log(`    ${c.mag("--local")}                ${c.dim("usage: skip the Qoder account call")}`);
   console.log("");
   console.log(`  ${c.bold("Walkthrough")}`);
   console.log(`    1  ${c.fg("qoder-cn-infer setup")}`);
@@ -382,9 +409,15 @@ function waitEnter(yes, prompt) {
   }
 }
 
-function wireHermes(cfg) {
-  const hermes = path.join(os.homedir(), ".hermes", "config.yaml");
-  const block = `
+function hermesProfilesDir() {
+  return (
+    process.env.QODER_CN_INFER_HERMES_PROFILES_DIR ||
+    path.join(os.homedir(), ".hermes", "profiles")
+  );
+}
+
+function hermesProviderBlock(cfg) {
+  return `
   qoder-cn-infer:
     name: Qoder CN
     base_url: ${endpoint(cfg)}
@@ -392,23 +425,32 @@ function wireHermes(cfg) {
     transport: chat_completions
     discover_models: true
 `.replace(/^\n/, "");
-  if (!fs.existsSync(hermes)) {
-    fs.mkdirSync(path.dirname(hermes), { recursive: true });
-    fs.writeFileSync(
-      hermes,
-      `model:\n  default: qwen3.8-max\n  provider: qoder-cn-infer\nproviders:\n${block}`
-    );
-    return { ok: true, path: hermes, created: true };
+}
+
+/**
+ * Merge the qoder-cn-infer provider block into a Hermes config file.
+ * Never touches model.default in existing files; only creates it for a fresh
+ * main config. Base URLs of an existing qoder block are refreshed in place.
+ */
+function wireHermesAt(cfg, configPath, { setDefaultOnCreate = false } = {}) {
+  const block = hermesProviderBlock(cfg);
+  if (!fs.existsSync(configPath)) {
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    const head = setDefaultOnCreate
+      ? `model:\n  default: qwen3.8-max\n  provider: qoder-cn-infer\n`
+      : `# Hermes profile config — qoder-cn-infer provider (default model untouched)\n`;
+    fs.writeFileSync(configPath, `${head}providers:\n${block}`);
+    return { ok: true, path: configPath, created: true };
   }
-  let text = fs.readFileSync(hermes, "utf8");
+  let text = fs.readFileSync(configPath, "utf8");
   if (
     /^\s+qoder-cn-infer:/m.test(text) ||
     /^\s+qoder-cn:/m.test(text) ||
     /base_url:\s*http:\/\/127\.0\.0\.1:8787/m.test(text)
   ) {
     text = text.replace(/base_url:\s*http:\/\/127\.0\.0\.1:\d+(\/v1)?/g, `base_url: ${endpoint(cfg)}`);
-    fs.writeFileSync(hermes, text);
-    return { ok: true, path: hermes, updated: true };
+    fs.writeFileSync(configPath, text);
+    return { ok: true, path: configPath, updated: true };
   }
   if (/^providers:\s*$/m.test(text)) {
     text = text.replace(/^providers:\s*$/m, `providers:\n${block.trimEnd()}`);
@@ -417,8 +459,108 @@ function wireHermes(cfg) {
   } else {
     text += `\nproviders:\n${block}`;
   }
-  fs.writeFileSync(hermes, text);
-  return { ok: true, path: hermes, updated: true };
+  fs.writeFileSync(configPath, text);
+  return { ok: true, path: configPath, updated: true };
+}
+
+function wireHermes(cfg) {
+  return wireHermesAt(cfg, path.join(os.homedir(), ".hermes", "config.yaml"), {
+    setDefaultOnCreate: true,
+  });
+}
+
+/**
+ * Hermes Telegram gateway bots run as profiles under ~/.hermes/profiles/<name>/.
+ * Detect ones with a config.yaml or gateway artifacts.
+ */
+function detectHermesProfiles(base = hermesProfilesDir()) {
+  const out = [];
+  let entries = [];
+  try {
+    entries = fs.readdirSync(base, { withFileTypes: true });
+  } catch {
+    return out;
+  }
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    const dir = path.join(base, e.name);
+    const configPath = path.join(dir, "config.yaml");
+    const configExists = fs.existsSync(configPath);
+    let looksLikeProfile = configExists;
+    if (!looksLikeProfile) {
+      for (const marker of ["profile.yaml", ".env", "gateway.pid", "gateway.lock"]) {
+        if (fs.existsSync(path.join(dir, marker))) {
+          looksLikeProfile = true;
+          break;
+        }
+      }
+    }
+    if (!looksLikeProfile) continue;
+    out.push({ name: e.name, dir, config_path: configPath, config_exists: configExists });
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function profileIsWired(configPath) {
+  try {
+    const text = fs.readFileSync(configPath, "utf8");
+    return (
+      /^\s+qoder-cn-infer:/m.test(text) ||
+      /base_url:\s*http:\/\/127\.0\.0\.1:8787/m.test(text)
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Wire the provider block into Hermes bot profiles.
+ *   names: explicit profile names (must exist in profiles/ to be wired)
+ *   all:   wire every detected profile that has a config.yaml
+ * Profiles without a config.yaml are reported as skipped, never created —
+ * a profile's default model is always the operator's choice.
+ */
+function wireHermesProfiles(cfg, { names = [], all = false } = {}) {
+  const detected = detectHermesProfiles();
+  const results = [];
+  const targets = names.length
+    ? names.map((name) => detected.find((p) => p.name === name) || { name, missing: true })
+    : all
+      ? detected
+      : [];
+  for (const target of targets) {
+    if (target.missing) {
+      results.push({ name: target.name, path: "", status: "not_found" });
+      continue;
+    }
+    if (!target.config_exists) {
+      results.push({ name: target.name, path: target.config_path, status: "skipped_no_config" });
+      continue;
+    }
+    const r = wireHermesAt(cfg, target.config_path);
+    results.push({
+      name: target.name,
+      path: target.config_path,
+      status: r.created ? "created" : "wired",
+    });
+  }
+  return { profiles: results, detected };
+}
+
+function printProfileResults(result) {
+  const list = result.profiles || [];
+  if (!list.length) {
+    console.log(c.dim("profiles  none detected"));
+    return;
+  }
+  for (const p of list) {
+    const label = `profile   ${p.name}`;
+    if (p.status === "wired" || p.status === "created") console.log(c.ok(`${label}  ${p.path}`));
+    else if (p.status === "skipped_no_config")
+      console.log(c.skip(`${label}  no config.yaml yet (skipped)`));
+    else if (p.status === "not_found") console.log(c.bad(`${label}  not found`));
+    else console.log(c.bad(`${label}  ${p.status}`));
+  }
 }
 
 function wireOpenCode(cfg) {
@@ -463,6 +605,20 @@ async function cmdDoctor(args) {
     ok: healthy,
     detail: healthy ? endpoint(cfg) : "not running",
   });
+  // Hermes bot profiles (Telegram gateways) — informational: wiring is a
+  // deliberate choice, so an unwired profile is reported but never fails doctor.
+  for (const p of detectHermesProfiles()) {
+    if (!p.config_exists) {
+      checks.push({ id: `profile:${p.name}`, ok: true, detail: "no config.yaml (skipped)" });
+      continue;
+    }
+    const wired = profileIsWired(p.config_path);
+    checks.push({
+      id: `profile:${p.name}`,
+      ok: true,
+      detail: wired ? "wired" : "not wired (qoder-cn-infer wire --profiles)",
+    });
+  }
   if (args.json) {
     jsonOut({ ok: checks.every((x) => x.ok), checks, endpoint: endpoint(cfg) });
     return checks.every((x) => x.ok) ? 0 : 1;
@@ -486,6 +642,7 @@ async function cmdStatus(args) {
   }
   console.log(healthy ? c.ok(`running  ${endpoint(cfg)}`) : c.bad("not running"));
   console.log(hasLogin() ? c.ok("login    signed in") : c.skip("login    missing (qoder-cn-infer login)"));
+  console.log(c.dim("usage    qoder-cn-infer usage  (credits · tokens)"));
   return healthy ? 0 : 1;
 }
 
@@ -639,14 +796,200 @@ async function cmdModels(args) {
   return 0;
 }
 
+function fmtCredits(n) {
+  const v = Number(n) || 0;
+  if (v === 0) return "0";
+  if (v < 0.0001) return "<0.0001";
+  return String(Math.round(v * 10000) / 10000);
+}
+
+function fmtQuotaNumber(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return "?";
+  return Number.isInteger(v) ? String(v) : String(Math.round(v * 100) / 100);
+}
+
+function usageBar(pct, width = 28) {
+  const clamped = Math.max(0, Math.min(1, Number(pct) || 0));
+  const filled = Math.round(clamped * width);
+  return "█".repeat(filled) + "░".repeat(width - filled);
+}
+
+function fmtDateTime(ms) {
+  const d = new Date(Number(ms));
+  if (!ms || Number.isNaN(d.getTime())) return "";
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/**
+ * Credits + tokens: the Qoder account quota (same numbers qoderclicn shows)
+ * and the local meter of everything this facade served.
+ */
+async function cmdUsage(args) {
+  const cfg = loadConfig();
+  const healthy = await isHealthy(cfg);
+  let account = null;
+  let accountError = null;
+  let local = null;
+  let source = "file";
+  if (healthy) {
+    const params = [];
+    if (args.refresh) params.push("refresh=1");
+    if (args.localOnly) params.push("local=1");
+    const qs = params.length ? `?${params.join("&")}` : "";
+    const r = await httpGet(
+      `http://${cfg.host || DEFAULT_HOST}:${cfg.port || DEFAULT_PORT}/usage${qs}`,
+      25000
+    );
+    if (r.status === 200) {
+      try {
+        const data = JSON.parse(r.body);
+        account = data.account || null;
+        accountError = data.account_error || null;
+        local = data.local || null;
+        source = data.source || "server";
+      } catch {
+        accountError = "bad /usage response from server";
+      }
+    } else {
+      accountError = r.error || `HTTP ${r.status}`;
+    }
+  }
+  if (!local) local = usageSummary();
+  if (!account && !accountError && !args.localOnly && hasLogin()) {
+    try {
+      const id = await resolveIdentity();
+      const sess = buildSession(id.identity, id.machineId, id.machineToken, id.machineType);
+      account = await fetchAccountUsage(sess);
+      source = "direct";
+    } catch (e) {
+      accountError = String(e?.message || e);
+    }
+  }
+  if (args.json) {
+    jsonOut({
+      ok: true,
+      account,
+      account_error: accountError,
+      source,
+      local,
+      endpoint: endpoint(cfg),
+      server_running: healthy,
+    });
+    return 0;
+  }
+
+  printBanner("Usage", "Qoder CN account quota and what the facade has served.");
+  printHeader("Qoder CN account");
+  if (args.localOnly) {
+    console.log("  " + c.skip("skipped (--local)"));
+  } else if (account?.displayMode === "enterprise") {
+    console.log(`  ${c.fg("Enterprise plan")}  ${c.dim("— usage is tracked in the Qoder console")}`);
+    console.log(`  ${c.dim("Details   ")}  ${c.cyan(account.enterpriseUsage.detailUrl)}`);
+  } else if (account?.qoderUsage) {
+    const u = account.qoderUsage;
+    const quota = u.userQuota;
+    const pct = Number(u.totalUsagePercentage) || 0;
+    console.log(`  ${c.dim("Plan      ")}  ${c.fg(u.userType)}`);
+    if (quota) {
+      console.log(
+        `  ${c.dim("Credits   ")}  ${c.fg(`${fmtQuotaNumber(quota.used)} / ${fmtQuotaNumber(quota.total)} used`)}  ${c.dim(`(${(pct * 100).toFixed(1)}%)`)}`
+      );
+      const barColor = pct >= 0.85 ? c.red : pct >= 0.6 ? c.yellow : c.green;
+      console.log(`  ${c.dim("Bar       ")}  ${barColor(usageBar(pct))}  ${c.dim(`${(pct * 100).toFixed(0)}%`)}`);
+      console.log(
+        `  ${c.dim("Remaining ")}  ${c.fg(`${fmtQuotaNumber(quota.remaining)} ${quota.unit}`)}`
+      );
+      if (u.addOnQuota) {
+        console.log(
+          `  ${c.dim("Add-on    ")}  ${c.fg(`${fmtQuotaNumber(u.addOnQuota.remaining)} ${u.addOnQuota.unit} left`)}`
+        );
+      }
+    } else {
+      console.log(`  ${c.dim("Usage     ")}  ${c.fg(`${(pct * 100).toFixed(1)}% of plan`)}`);
+    }
+    if (u.expiresAt) {
+      console.log(
+        `  ${c.dim("Resets    ")}  ${c.fg(fmtDateTime(u.expiresAt))}  ${c.dim(formatResetIn(u.expiresAt))}`
+      );
+    }
+    if (u.isQuotaExceeded) {
+      console.log("  " + c.bad("quota exceeded — switch models or wait for the reset"));
+    }
+    if (u.upgradeUrl) console.log(`  ${c.dim("Upgrade   ")}  ${c.dim(u.upgradeUrl)}`);
+    console.log(
+      `  ${c.dim("Source    ")}  ${c.dim(source === "cache" ? "cache ≤60s (--refresh for live)" : source)}`
+    );
+  } else if (accountError) {
+    console.log("  " + c.bad(accountError));
+  } else {
+    console.log("  " + c.skip("not signed in — qoder-cn-infer login"));
+  }
+
+  printHeader("Local meter");
+  const t = local.totals || {};
+  console.log(
+    `  ${c.dim("Requests  ")}  ${c.fg(String(t.requests || 0))}${t.billable_requests !== t.requests ? c.dim(`  (${t.billable_requests || 0} billable)`) : ""}`
+  );
+  console.log(
+    `  ${c.dim("Tokens    ")}  ${c.fg(formatCompact(t.total_tokens || 0))} total  ${c.dim(`· ${formatCompact(t.prompt_tokens || 0)} in · ${formatCompact(t.completion_tokens || 0)} out · ${formatCompact(t.reasoning_tokens || 0)} thinking · ${formatCompact(t.cached_tokens || 0)} cached`)}`
+  );
+  console.log(`  ${c.dim("Credits   ")}  ${c.fg(fmtCredits(t.credits))}`);
+  console.log(
+    `  ${c.dim("Today     ")}  ${c.fg(formatCompact(local.today?.total_tokens || 0))} tokens  ${c.dim("·")}  ${c.fg(fmtCredits(local.today?.credits))}`
+  );
+  const models = Object.entries(local.models || {});
+  if (models.length) {
+    printHeader("By model");
+    for (const [name, m] of models.sort((a, b) => (b[1].credits || 0) - (a[1].credits || 0))) {
+      console.log(
+        `  ${c.fg(name.padEnd(18))} ${String(m.requests).padStart(4)} req  ${String(formatCompact(m.total_tokens)).padStart(8)} tok  ${fmtCredits(m.credits)} cr`
+      );
+    }
+  }
+  if ((local.recent || []).length > 1) {
+    printHeader("Recent days");
+    for (const d of local.recent) {
+      console.log(
+        `  ${c.dim(d.day)}  ${String(d.requests).padStart(4)} req  ${String(formatCompact(d.total_tokens)).padStart(8)} tok  ${fmtCredits(d.credits)} cr`
+      );
+    }
+  }
+  console.log("");
+  if (!healthy) {
+    printInfo("API not running — local meter read from disk:", usagePath());
+    console.log("");
+  }
+  return 0;
+}
+
+function selectProfilesForWiring(args) {
+  if (args.noProfiles) return null;
+  if (args.profiles.length) return { names: args.profiles };
+  if (args.allProfiles) return { all: true };
+  if (args.yes) return { all: true };
+  return null;
+}
+
 function cmdWire(args) {
   const cfg = loadConfig();
   const h = wireHermes(cfg);
   const o = wireOpenCode(cfg);
-  if (args.json) jsonOut({ hermes: h, opencode: o, endpoint: endpoint(cfg) });
+  const selection = selectProfilesForWiring(args);
+  const profileResult = selection ? wireHermesProfiles(cfg, selection) : null;
+  if (args.json)
+    jsonOut({
+      hermes: h,
+      opencode: o,
+      profiles: profileResult ? profileResult.profiles : [],
+      endpoint: endpoint(cfg),
+    });
   else {
     console.log(c.ok(`Hermes    ${h.path}`));
     console.log(c.ok(`OpenCode  ${o.path}`));
+    if (profileResult) printProfileResults(profileResult);
+    else console.log(c.dim("profiles  skipped (--profiles wires Hermes bot profiles)"));
     console.log(c.dim(`Base URL  ${endpoint(cfg)}`));
     console.log(c.dim("API key   not-used"));
     console.log(c.dim("Model     qwen3.8-max"));
@@ -757,6 +1100,50 @@ async function cmdSetup(args) {
   else printInfo("OpenCode skipped");
   step("clients", true, `wired → ${endpoint(cfg)}`);
 
+  printHeader("Hermes bot profiles");
+  printInfo("Telegram gateway bots run as Hermes profiles under ~/.hermes/profiles/.");
+  const detectedProfiles = detectHermesProfiles();
+  let profileResult = { profiles: [], detected: detectedProfiles };
+  if (args.noProfiles) {
+    step("profiles", true, "skipped (--no-profiles)");
+  } else if (!detectedProfiles.length) {
+    step("profiles", true, "none detected");
+  } else {
+    let selection = null;
+    if (args.profiles.length) selection = { names: args.profiles };
+    else if (args.allProfiles || args.yes) selection = { all: true };
+    else if (interactive) {
+      const names = detectedProfiles.map((p) => p.name).join(", ");
+      const want = await promptYesNo(`  Wire detected profiles (${names})?`, true);
+      if (want) selection = { all: true };
+    } else {
+      selection = { all: true };
+    }
+    if (selection) {
+      profileResult = wireHermesProfiles(cfg, selection);
+      const wiredList = profileResult.profiles.filter(
+        (p) => p.status === "wired" || p.status === "created"
+      );
+      const skippedList = profileResult.profiles.filter((p) => p.status === "skipped_no_config");
+      const failedList = profileResult.profiles.filter((p) => p.status === "not_found");
+      const detailBits = [`${wiredList.length} wired`];
+      if (skippedList.length) detailBits.push(`${skippedList.length} skipped`);
+      if (failedList.length) detailBits.push(`${failedList.length} missing`);
+      step("profiles", failedList.length === 0, detailBits.join(" · "));
+      if (!args.json) {
+        for (const p of profileResult.profiles) {
+          if (p.status === "wired" || p.status === "created")
+            printOk(`profile   ${p.name.padEnd(12)} ${ui.dim(p.path)}`);
+          else if (p.status === "skipped_no_config")
+            printInfo(`profile   ${p.name} skipped (no config.yaml yet)`);
+          else printBad(`profile   ${p.name} ${p.status}`);
+        }
+      }
+    } else {
+      step("profiles", true, "skipped");
+    }
+  }
+
   if (args.json) {
     jsonOut({
       ok: true,
@@ -765,6 +1152,7 @@ async function cmdSetup(args) {
       model: "qwen3.8-max",
       hermes: h.path,
       opencode: o.path,
+      profiles: profileResult.profiles,
       report,
     });
   } else {
@@ -825,6 +1213,7 @@ async function main() {
     stop: cmdStop,
     status: cmdStatus,
     models: cmdModels,
+    usage: cmdUsage,
     wire: cmdWire,
     uninstall: cmdUninstall,
   };
@@ -847,4 +1236,13 @@ if (isMain) {
   });
 }
 
-export { parseArgs, hasLogin, endpoint, printHelp };
+export {
+  parseArgs,
+  hasLogin,
+  endpoint,
+  printHelp,
+  wireHermesAt,
+  wireHermesProfiles,
+  detectHermesProfiles,
+  profileIsWired,
+};

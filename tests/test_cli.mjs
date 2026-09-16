@@ -16,6 +16,20 @@ test("parseArgs understands --yes and --json", () => {
   assert.equal(a._[0], "setup");
 });
 
+test("parseArgs collects profile flags and usage flags", () => {
+  const a = parseArgs(["wire", "--profiles"]);
+  assert.equal(a.allProfiles, true);
+  const b = parseArgs(["wire", "--profile", "kgu", "--profile", "backend"]);
+  assert.deepEqual(b.profiles, ["kgu", "backend"]);
+  const c = parseArgs(["wire", "--profile=kgu,backend"]);
+  assert.deepEqual(c.profiles, ["kgu", "backend"]);
+  const d = parseArgs(["setup", "--no-profiles"]);
+  assert.equal(d.noProfiles, true);
+  const e = parseArgs(["usage", "--refresh", "--local"]);
+  assert.equal(e.refresh, true);
+  assert.equal(e.localOnly, true);
+});
+
 test("parseArgs login --browser and --pat --token", () => {
   const b = parseArgs(["login", "--browser"]);
   assert.equal(b.browser, true);
@@ -29,9 +43,11 @@ test("qoder-cn-infer help and version exit 0", () => {
   const help = spawnSync(process.execPath, [CLI, "help"], { encoding: "utf8" });
   assert.equal(help.status, 0, help.stderr);
   assert.match(help.stdout, /qoder-cn-infer setup/);
+  assert.match(help.stdout, /usage/);
+  assert.match(help.stdout, /--profiles/);
   assert.doesNotMatch(help.stdout, /^qoder-cn \[OPTIONS\]/m);
   assert.match(help.stdout, /--yes/);
   const ver = spawnSync(process.execPath, [CLI, "version", "--json"], { encoding: "utf8" });
   assert.equal(ver.status, 0, ver.stderr);
-  assert.match(ver.stdout, /1\.0\.0/);
+  assert.match(ver.stdout, /1\.1\.0/);
 });

@@ -34,6 +34,7 @@ You should see green ticks:
 ✓ login          signed in
 ✓ api            http://127.0.0.1:8787/v1
 ✓ clients        Hermes + OpenCode
+✓ profiles       Hermes bot profiles wired
 ```
 
 If **login** is red, choose:
@@ -74,11 +75,59 @@ qoder-cn-infer start      # start the API
 qoder-cn-infer stop
 qoder-cn-infer status
 qoder-cn-infer models
+qoder-cn-infer usage      # credits, tokens, reset window
 qoder-cn-infer wire       # rewrite Hermes / OpenCode config
+                          #   --profiles · --profile <name> · --no-profiles
 qoder-cn-infer uninstall
 ```
 
 `-y` / `--yes` = no questions (for agents). `--json` = machine output.
+
+---
+
+## Usage and limits
+
+Same quota the Qoder CLI shows, plus a local meter of what this facade served.
+
+```bash
+qoder-cn-infer usage             # credits used / remaining, reset time, tokens
+qoder-cn-infer usage --json      # machine-readable
+qoder-cn-infer usage --refresh   # bypass the 60s account cache
+curl -s http://127.0.0.1:8787/usage   # same data from the API
+```
+
+The account side reads the CLI's own quota endpoint — `GET https://openapi.qoder.com.cn/api/v2/quota/usage` with the login token as a Bearer header — and returns credits total / used / remaining, usage percentage, `isQuotaExceeded`, the reset time (`expiresAt`), and the upgrade link. Enterprise orgs get their console link instead.
+
+The local side is a meter the server keeps from each completion's own usage event: prompt / completion / reasoning / cached tokens and credits (the same credits Qoder bills), stored in `~/.local/state/qoder-cn-infer/usage.json`, rolled up per model and per day. Streamed completions also forward that event as an OpenAI `usage` chunk (`choices: []`), so OpenAI-compatible clients see token counts instead of zeros.
+
+```json
+{
+  "account": { "qoderUsage": { "userType": "personal_professional_trial", "totalUsagePercentage": 0.3, "userQuota": { "total": 300, "used": 87, "remaining": 213, "unit": "credits" } } },
+  "local": { "totals": { "requests": 12, "total_tokens": 45231, "credits": 0.42 } }
+}
+```
+
+---
+
+## Hermes Telegram gateways (bot profiles)
+
+Telegram gateway bots run as Hermes **profiles** under `~/.hermes/profiles/<name>/`. `setup` and `wire` can add the qoder-cn-infer provider to them as well, next to the main `~/.hermes/config.yaml`:
+
+```bash
+qoder-cn-infer wire --profiles        # every detected profile
+qoder-cn-infer wire --profile kgu     # one profile (repeatable)
+qoder-cn-infer wire --no-profiles     # skip profiles entirely
+```
+
+Wiring only adds the provider block to a profile's `config.yaml`; it never changes that profile's default model or provider, and profiles without a `config.yaml` are skipped and reported. `qoder-cn-infer doctor` shows the wired state of each profile.
+
+To actually run a bot on your Qoder quota, switch that profile's model and restart its gateway:
+
+```bash
+hermes -p kgu model       # pick qoder-cn-infer / qwen3.8-max
+```
+
+Keep `qoder-cn-infer start` running — profiles point at `http://127.0.0.1:8787/v1` like everything else.
 
 ---
 

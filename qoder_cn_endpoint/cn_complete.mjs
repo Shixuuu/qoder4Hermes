@@ -26,6 +26,22 @@ import {
   openaiListFromGateway,
   resolveModelKey as resolveFromCatalog,
 } from "./catalog.mjs";
+import { recordUsage } from "./usage_store.mjs";
+
+const num0 = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+};
+const numOrNull = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+};
+
+/** Upstream usage events are forwarded as OpenAI usage chunks unless disabled. */
+function usageChunksEnabled() {
+  const v = String(process.env.QODER_CN_INFER_USAGE_CHUNKS ?? "").toLowerCase();
+  return v !== "0" && v !== "false" && v !== "off";
+}
 
 export { CHAT_FALLBACK };
 export function resolveModelKey(modelId) {
@@ -256,7 +272,7 @@ export function parseCnDataLine(payload) {
     if (inner.code && inner.code !== "ok") {
       return { error: inner.message || inner.code };
     }
-    return {
+    const out = {
       delta: {
         role: delta.role || undefined,
         content: typeof delta.content === "string" ? delta.content : "",
@@ -264,6 +280,26 @@ export function parseCnDataLine(payload) {
       },
       finish_reason: finish,
     };
+    // The CN gateway sends token + credit accounting as its own event right
+    // before [DONE]: {choices:[], usage:{prompt_tokens, completion_tokens,
+    // credits, original_credits, billable, ...}}.
+    if (inner.usage && typeof inner.usage === "object") {
+      const u = inner.usage;
+      const usage = {
+        prompt_tokens: num0(u.prompt_tokens),
+        completion_tokens: num0(u.completion_tokens),
+        total_tokens: num0(u.total_tokens),
+        reasoning_tokens: num0(u.completion_tokens_details?.reasoning_tokens),
+        cached_tokens: num0(u.prompt_tokens_details?.cached_tokens),
+      };
+      const credits = numOrNull(u.credits);
+      if (credits !== null) usage.credits = credits;
+      const original = numOrNull(u.original_credits);
+      if (original !== null) usage.original_credits = original;
+      if (typeof u.billable === "boolean") usage.billable = u.billable;
+      out.usage = usage;
+    }
+    return out;
   } catch {
     return null;
   }
@@ -287,6 +323,36 @@ export function openAiSseChunk(id, created, model, delta, finishReason) {
     }) +
     "\n\n"
   );
+}
+
+/** OpenAI usage chunk (choices:[]) — same shape qoderclicn's OpenAI adapter emits. */
+export function openAiUsageChunk(id, created, model, usage) {
+  return (
+    "data: " +
+    JSON.stringify({
+      id,
+      object: "chat.completion.chunk",
+      created,
+      model,
+      choices: [],
+      usage,
+    }) +
+    "\n\n"
+  );
+}
+
+function openAiUsagePayload(u) {
+  const out = {
+    prompt_tokens: num0(u.prompt_tokens),
+    completion_tokens: num0(u.completion_tokens),
+    total_tokens: num0(u.total_tokens),
+    completion_tokens_details: { reasoning_tokens: num0(u.reasoning_tokens) },
+    prompt_tokens_details: { cached_tokens: num0(u.cached_tokens) },
+  };
+  if (u.credits !== undefined) out.credits = u.credits;
+  if (u.original_credits !== undefined) out.original_credits = u.original_credits;
+  if (u.billable !== undefined) out.billable = u.billable;
+  return out;
 }
 
 function resolveStreamFn({ httpsStream, httpsRequest }) {
@@ -376,6 +442,7 @@ export async function* streamOpenAiSse({
   let sawFinish = false;
   let emittedToolCalls = false;
   let contentBuf = "";
+  let finalUsage = null;
   const clientHasTools = Array.isArray(tools) && tools.length > 0;
 
   for await (const line of upstream.lines()) {
@@ -414,6 +481,21 @@ export async function* streamOpenAiSse({
     if (finish && finish !== "stop") {
       sawFinish = true;
       yield openAiSseChunk(id, created, model, {}, finish);
+    }
+    if (parsed.usage) {
+      finalUsage = parsed.usage;
+      if (usageChunksEnabled()) {
+        yield openAiUsageChunk(id, created, model, openAiUsagePayload(parsed.usage));
+      }
+    }
+  }
+
+  // Account the turn locally (tokens + credits from the gateway's own event).
+  if (finalUsage) {
+    try {
+      await recordUsage({ model, ...finalUsage });
+    } catch {
+      /* the meter is best-effort; never fail the completion over it */
     }
   }
 
@@ -461,6 +543,7 @@ export async function completeChat(
   let finish = "stop";
   let id = "chatcmpl-" + crypto.randomUUID().replace(/-/g, "").slice(0, 24);
   let created = Math.floor(Date.now() / 1000);
+  let capturedUsage = null;
   const toolCalls = [];
   for await (const ev of streamOpenAiSse({
     messages,
@@ -479,6 +562,7 @@ export async function completeChat(
     const obj = JSON.parse(trimmed.slice(5).trim());
     id = obj.id || id;
     created = obj.created || created;
+    if (obj.usage) capturedUsage = obj.usage;
     const choice = (obj.choices || [])[0] || {};
     if (choice.delta?.content) content += choice.delta.content;
     if (choice.delta?.tool_calls) {
@@ -511,7 +595,7 @@ export async function completeChat(
         finish_reason: finish,
       },
     ],
-    usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+    usage: capturedUsage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
     _debug: {
       url: CHAT_URL,
       prompt: messagesToPrompt(messages),

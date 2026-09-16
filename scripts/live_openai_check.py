@@ -61,13 +61,30 @@ def main() -> int:
     )
     t1 = assistant_text(chat1)
     t2 = assistant_text(chat2)
+    usage = None
+    try:
+        usage = request_json(f"{base}/usage?refresh=1", None, timeout=30)
+        account = (usage or {}).get("account") or {}
+        qoder = account.get("qoderUsage") or {}
+        quota = qoder.get("userQuota") or {}
+        local = (usage or {}).get("local") or {}
+        usage = {
+            "credits_total": quota.get("total"),
+            "credits_used": quota.get("used"),
+            "credits_remaining": quota.get("remaining"),
+            "usage_percentage": qoder.get("totalUsagePercentage"),
+            "local_totals": local.get("totals"),
+        }
+    except Exception as exc:  # noqa: BLE001
+        usage = {"error": str(exc)}
     if args.out_dir:
         out = Path(args.out_dir)
         out.mkdir(parents=True, exist_ok=True)
         (out / "live-models.json").write_text(json.dumps(models, indent=2) + "\n", encoding="utf-8")
         (out / "live-chat-1.json").write_text(json.dumps(chat1, indent=2) + "\n", encoding="utf-8")
         (out / "live-chat-2.json").write_text(json.dumps(chat2, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps({"models": ids, "chat1": t1, "chat2": t2, "ok": True}))
+        (out / "live-usage.json").write_text(json.dumps(usage, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps({"models": ids, "chat1": t1, "chat2": t2, "usage": usage, "ok": True}))
     return 0
 
 
