@@ -15,6 +15,8 @@ One endpoint, any harness: Hermes, OpenCode, Claude Code, custom scripts, raw HT
 git clone https://github.com/Shixuuu/qoder-cn-infer
 cd qoder-cn-infer
 QODERCN_PERSONAL_ACCESS_TOKEN=pt-… ./scripts/install.sh --yes   # omitting the env var runs the login wizard
+# Qoder International instead of CN (separate account, token from qoder.com/account/integrations):
+QODER_CN_INFER_REGION=global QODER_PERSONAL_ACCESS_TOKEN=pt-… ./scripts/install.sh --yes
 ```
 
 Setup unpacks Node if missing, starts the API on `http://127.0.0.1:8787/v1`, and only wires the clients it detects (Hermes / OpenCode). Anything else just points at the URL:
@@ -248,15 +250,23 @@ Keep `qoder-cn-infer start` running — profiles point at `http://127.0.0.1:8787
 
 ---
 
+## Regions
+
+- `cn` (default): Qoder CN — CLI `qoderclicn`, hosts `gateway.qoder.com.cn` / `openapi.qoder.com.cn`, PAT from `https://qoder.cn/account/integrations`, stored in `~/.config/qoder-cn-infer/pat`, env `QODERCN_PERSONAL_ACCESS_TOKEN`.
+- `global`: Qoder International — CLI `qodercli`, hosts `api2.qoder.sh` (inference) / `center.qoder.sh` / `openapi.qoder.sh`, PAT from `https://qoder.com/account/integrations`, stored in `~/.config/qoder-cn-infer/pat.global`, env `QODER_PERSONAL_ACCESS_TOKEN`.
+- Resolution order: `--region` flag → `QODER_CN_INFER_REGION` → `config.json` `region` → `cn`. `setup` and `login` persist it; the server reads it at startup (the systemd unit sets `QODER_CN_INFER_REGION`; the nohup fallback passes it too).
+- The two regions are separate services with separate accounts: a CN PAT is rejected by the global token exchange (HTTP 400) and vice versa.
+
 ## Agent setup
 
 See [AGENTS.md](./AGENTS.md). Short version:
 
 ```bash
-node bin/qoder-cn-infer.mjs setup --yes
+node bin/qoder-cn-infer.mjs setup --yes                                  # Qoder CN (default)
+QODER_PERSONAL_ACCESS_TOKEN=pt-… node bin/qoder-cn-infer.mjs setup --yes --region global
 ```
 
-If it exits **2**, the operator must log in, then run the same command again.
+If it exits **2**, the operator must log in (`qoder-cn-infer login --pat --token pt-…`, add `--region global` for Qoder International), then run the same command again. `setup --json` reports the active `region`; `doctor --json` and `status --json` do too.
 
 ---
 

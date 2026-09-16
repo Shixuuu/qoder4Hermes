@@ -6,9 +6,11 @@
 set -euo pipefail
 
 YES=0
+PASSTHROUGH=()
 for a in "$@"; do
   case "$a" in
     -y|--yes|--non-interactive) YES=1 ;;
+    *) PASSTHROUGH+=("$a") ;;
   esac
 done
 if [[ "${QODER_CN_YES:-}" == "1" ]]; then YES=1; fi
@@ -67,7 +69,7 @@ cd "$SRC"
 chmod +x bin/qoder-cn-infer.mjs scripts/install.sh 2>/dev/null || true
 
 if [[ "$YES" -eq 1 ]]; then
-  exec node bin/qoder-cn-infer.mjs setup --yes
+  exec node bin/qoder-cn-infer.mjs setup --yes ${PASSTHROUGH[@]+"${PASSTHROUGH[@]}"}
 else
-  exec node bin/qoder-cn-infer.mjs setup
+  exec node bin/qoder-cn-infer.mjs setup ${PASSTHROUGH[@]+"${PASSTHROUGH[@]}"}
 fi

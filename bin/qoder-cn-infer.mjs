@@ -476,6 +476,7 @@ function startNohup(cfg) {
       ...process.env,
       QODER_CN_INFER_HOST: String(cfg.host || DEFAULT_HOST),
       QODER_CN_INFER_PORT: String(cfg.port || DEFAULT_PORT),
+      QODER_CN_INFER_REGION: normalizeRegion(cfg.region || "cn"),
     },
   });
   child.unref();
@@ -1383,8 +1384,16 @@ function saveTelegramConfig(tgc) {
 
 async function collectStatus() {
   const cfg = loadConfig();
-  const healthy = await isHealthy(cfg);
-  return { running: healthy, login: hasLogin(), endpoint: endpoint(cfg) };
+  const health = await healthInfo(cfg);
+  const running = Boolean(health);
+  const region = health?.region ? normalizeRegion(health.region) : resolveRegion();
+  return {
+    running,
+    login: hasLogin(region),
+    endpoint: endpoint(cfg),
+    region,
+    label: endpointsFor(region).label,
+  };
 }
 
 /**
@@ -1536,7 +1545,11 @@ function cmdWire(args) {
 }
 
 async function cmdSetup(args) {
-  const cfg = { root: ROOT, host: args.host, port: args.port };
+  const setupRegion = resolveRegion(args.region);
+  const setupLabel = endpointsFor(setupRegion).label;
+  const setupDef = REGION_DEFS[setupRegion];
+  // Preserve unrelated config keys (notably `region` set by `login --region …`).
+  const cfg = { ...loadConfig(), root: ROOT, host: args.host, port: args.port, region: setupRegion };
   saveConfig(cfg);
   const report = { steps: [] };
   const step = (id, ok, detail) => {
@@ -1548,13 +1561,13 @@ async function cmdSetup(args) {
   if (!args.json) {
     printBanner(
       "qoder-cn-infer Setup Wizard",
-      "Let's turn your Qoder CN quota into a local API.",
+      `Let's turn your ${setupLabel} quota into a local API.`,
       "Press Ctrl+C at any time to exit."
     );
   }
 
   printHeader("Prerequisites");
-  printInfo("Node, the CLI shim, and (for browser login) qoderclicn.");
+  printInfo(`Node, the CLI shim, and (for browser login) ${setupDef.cliName}.`);
   const nodeOk = Number(process.versions.node.split(".")[0]) >= 18;
   step("node", nodeOk, `v${process.versions.node}`);
   if (!nodeOk) {
@@ -1562,14 +1575,17 @@ async function cmdSetup(args) {
     return 1;
   }
 
-  const skipOfficialCli = Boolean(args.pat || args.token || storedPat(resolveRegion(args.region)));
+  const skipOfficialCli = Boolean(args.pat || args.token || storedPat(setupRegion));
   if (skipOfficialCli) {
-    step("qoderclicn", true, "skipped · PAT login");
+    step(setupDef.cliName, true, "skipped · PAT login");
   } else {
-    const cli = ensureQoderCli(args.yes);
-    step("qoderclicn", cli.ok, cli.ok ? cli.path + (cli.installed ? " (installed)" : "") : cli.error);
+    const cli =
+      setupRegion === "global"
+        ? ensureQoderCli(args.yes, { name: "qodercli", pkg: "@qoder-ai/qodercli", alt: "" })
+        : ensureQoderCli(args.yes);
+    step(setupDef.cliName, cli.ok, cli.ok ? cli.path + (cli.installed ? " (installed)" : "") : cli.error);
     if (!cli.ok) {
-      if (args.json) jsonOut({ ok: false, error: "qoderclicn", report });
+      if (args.json) jsonOut({ ok: false, error: setupDef.cliName, report });
       return 1;
     }
   }
@@ -1578,21 +1594,24 @@ async function cmdSetup(args) {
   step("cli", true, BIN_LINK);
 
   printHeader("Sign in");
-  printInfo("This is the only step that needs your Qoder account.");
-  if (!hasLogin()) {
+  printInfo(`This is the only step that needs your ${setupLabel} account.`);
+  if (!hasLogin(setupRegion)) {
+    const rflag = setupRegion === "cn" ? "" : ` --region ${setupRegion}`;
+    const patEnvName = setupDef.patEnvVars[0];
     if (args.yes && !args.pat && !args.token && !args.browser) {
       if (args.json) {
         jsonOut({
           ok: false,
           error: "not_logged_in",
-          hint: "qoder-cn-infer login --browser  or  --pat --token pt-…",
+          region: setupRegion,
+          hint: `qoder-cn-infer login${rflag} --browser  or  qoder-cn-infer login${rflag} --pat --token pt-…  (or set ${patEnvName})`,
           report,
         });
       } else {
-        printWarn("Sign in is required.");
-        printInfo("Browser   qoder-cn-infer login --browser");
-        printInfo("PAT       qoder-cn-infer login --pat --token pt-…");
-        printInfo("Then      qoder-cn-infer setup --yes");
+        printWarn(`Sign in is required (${setupLabel}).`);
+        printInfo(`Browser   qoder-cn-infer login${rflag} --browser`);
+        printInfo(`PAT       qoder-cn-infer login${rflag} --pat --token pt-…   ${setupDef.patHintUrl}`);
+        printInfo(`Or set    ${patEnvName}=pt-…   then  qoder-cn-infer setup --yes`);
       }
       return 2;
     }
@@ -1602,7 +1621,7 @@ async function cmdSetup(args) {
       loginArgs.browser = false;
     }
     const loginCode = await cmdLogin({ ...loginArgs, json: false, fromSetup: true });
-    if (loginCode !== 0 && !hasLogin()) {
+    if (loginCode !== 0 && !hasLogin(setupRegion)) {
       step("login", false, "still missing");
       return 2;
     }
@@ -1611,7 +1630,7 @@ async function cmdSetup(args) {
     const again = await promptYesNo("  Sign in again / switch method?", false);
     if (again) await cmdLogin({ ...args, json: false, fromSetup: true });
   }
-  step("login", true, storedPat(resolveRegion(args.region)) ? "PAT" : "browser");
+  step("login", true, storedPat(setupRegion) ? "PAT" : "browser");
 
   printHeader("Local API");
   printInfo("Starts on 127.0.0.1 and restarts itself if it crashes.");
@@ -1691,6 +1710,8 @@ async function cmdSetup(args) {
       endpoint: endpoint(cfg),
       api_key: "not-used",
       model: "qwen3.8-max",
+      region: setupRegion,
+      label: setupLabel,
       hermes: h.path,
       opencode: o.path,
       profiles: profileResult.profiles,
@@ -1703,6 +1724,7 @@ async function cmdSetup(args) {
     console.log(`  ${c.dim("Base URL")}   ${c.cyan(endpoint(cfg))}`);
     console.log(`  ${c.dim("API key")}    ${c.fg("not-used")}`);
     console.log(`  ${c.dim("Model")}      ${c.fg("qwen3.8-max")}  ${c.dim("· qwen3.8-flash · efficient")}`);
+    console.log(`  ${c.dim("Region")}     ${c.fg(`${setupRegion} (${setupLabel})`)}`);
     console.log("");
     console.log(`  ${c.dim("Hermes")}     hermes model  →  qoder-cn-infer / qwen3.8-max`);
     console.log("");
