@@ -30,6 +30,17 @@ test("parseArgs collects profile flags and usage flags", () => {
   assert.equal(e.localOnly, true);
 });
 
+test("parseArgs collects telegram flags", () => {
+  const a = parseArgs(["telegram", "--tg-token", "123:ABC", "--chat", "99", "--install"]);
+  assert.equal(a.tgToken, "123:ABC");
+  assert.equal(a.chat, "99");
+  assert.equal(a.install, true);
+  const b = parseArgs(["telegram", "--report"]);
+  assert.equal(b.report, true);
+  const c = parseArgs(["telegram", "--uninstall"]);
+  assert.equal(c.uninstall, true);
+});
+
 test("parseArgs login --browser and --pat --token", () => {
   const b = parseArgs(["login", "--browser"]);
   assert.equal(b.browser, true);
@@ -45,9 +56,10 @@ test("qoder-cn-infer help and version exit 0", () => {
   assert.match(help.stdout, /qoder-cn-infer setup/);
   assert.match(help.stdout, /usage/);
   assert.match(help.stdout, /--profiles/);
+  assert.match(help.stdout, /telegram/);
   assert.doesNotMatch(help.stdout, /^qoder-cn \[OPTIONS\]/m);
   assert.match(help.stdout, /--yes/);
   const ver = spawnSync(process.execPath, [CLI, "version", "--json"], { encoding: "utf8" });
   assert.equal(ver.status, 0, ver.stderr);
-  assert.match(ver.stdout, /1\.1\.0/);
+  assert.match(ver.stdout, /1\.2\.0/);
 });

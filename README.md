@@ -7,6 +7,28 @@ Unofficial. Not affiliated with Qoder / Alibaba.
 
 ---
 
+## Quickstart for any agent (any machine)
+
+One endpoint, any harness: Hermes, OpenCode, Claude Code, custom scripts, raw HTTP.
+
+```bash
+git clone https://github.com/Shixuuu/qoder-cn-infer
+cd qoder-cn-infer
+QODERCN_PERSONAL_ACCESS_TOKEN=pt-… ./scripts/install.sh --yes   # omitting the env var runs the login wizard
+```
+
+Setup unpacks Node if missing, starts the API on `http://127.0.0.1:8787/v1`, and only wires the clients it detects (Hermes / OpenCode). Anything else just points at the URL:
+
+```
+Base URL  http://127.0.0.1:8787/v1
+API key   not-used
+Model     qwen3.8-max  (or qwen3.8-flash, efficient, deepseek-v4-pro, glm-5.3, kimi-k3, …)
+```
+
+`qoder-cn-infer wire` forces Hermes + OpenCode config writes even when detection is inconclusive.
+
+---
+
 ## Human setup (copy this)
 
 You need a Qoder CN account. Everything else is automatic.
@@ -78,6 +100,7 @@ qoder-cn-infer models
 qoder-cn-infer usage      # credits, tokens, reset window
 qoder-cn-infer wire       # rewrite Hermes / OpenCode config
                           #   --profiles · --profile <name> · --no-profiles
+qoder-cn-infer telegram   # usage bot for Telegram (see below)
 qoder-cn-infer uninstall
 ```
 
@@ -106,6 +129,30 @@ The local side is a meter the server keeps from each completion's own usage even
   "local": { "totals": { "requests": 12, "total_tokens": 45231, "credits": 0.42 } }
 }
 ```
+
+---
+
+## Telegram usage bot
+
+Check usage from your phone — the repo ships a tiny bot (no extra dependencies):
+
+1. Create a bot with **@BotFather** in Telegram (`/newbot`) and copy the token.
+2. Install the usage bot:
+
+```bash
+qoder-cn-infer telegram --tg-token <token> --install
+```
+
+Message the bot once to bind that chat, then send `/usage` (also `/status` and `/help`). The token is stored in `~/.config/qoder-cn-infer/telegram.json` (mode 600), the bot restarts itself, and only the bound chat is answered.
+
+Prefer a scheduled digest? `--report` sends one push and exits, so any scheduler works:
+
+```bash
+# daily 9am credit check to the bound chat
+0 9 * * *  qoder-cn-infer telegram --report
+```
+
+Hermes agents: copy the bundled skill — `cp -r integrations/hermes-skill/qoder-usage ~/.hermes/skills/` — and any Hermes bot (Telegram profiles included) can answer plain "how much Qoder quota is left" questions.
 
 ---
 

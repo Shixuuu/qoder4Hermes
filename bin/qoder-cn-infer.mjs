@@ -29,10 +29,11 @@ import { fetchAccountUsage, formatResetIn } from "../qoder_cn_endpoint/quota.mjs
 import { resolveIdentity } from "../qoder_cn_endpoint/cn_auth.mjs";
 import { buildSession } from "../qoder_cn_endpoint/cn_cosy.mjs";
 import { usageSummary, usagePath, formatCompact } from "../qoder_cn_endpoint/usage_store.mjs";
+import { createBot } from "../qoder_cn_endpoint/telegram.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "..");
-const VERSION = "1.1.0";
+const VERSION = "1.2.0";
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 8787;
 const CONFIG_DIR = path.join(os.homedir(), ".config", "qoder-cn-infer");
@@ -44,6 +45,11 @@ const BIN_LINK = path.join(os.homedir(), ".local", "bin", "qoder-cn-infer");
 const OLD_BIN_LINK = path.join(os.homedir(), ".local", "bin", "qoder-cn");
 const UNIT_NAME = "qoder-cn-infer.service";
 const UNIT_PATH = path.join(os.homedir(), ".config", "systemd", "user", UNIT_NAME);
+const TG_UNIT_NAME = "qoder-cn-infer-telegram.service";
+const TG_UNIT_PATH = path.join(os.homedir(), ".config", "systemd", "user", TG_UNIT_NAME);
+const TG_PID_PATH = path.join(STATE_DIR, "telegram.pid");
+const TG_LOG_PATH = path.join(STATE_DIR, "telegram.log");
+const TG_CONFIG_PATH = path.join(CONFIG_DIR, "telegram.json");
 
 const tty = process.stdout.isTTY;
 const wrap = (code, s) => (tty ? `\x1b[${code}m${s}\x1b[0m` : s);
@@ -90,6 +96,11 @@ function parseArgs(argv) {
     noProfiles: false,
     refresh: false,
     localOnly: false,
+    tgToken: "",
+    chat: "",
+    report: false,
+    install: false,
+    uninstall: false,
   };
   const addProfiles = (v) => {
     for (const s of String(v || "").split(",")) {
@@ -117,6 +128,13 @@ function parseArgs(argv) {
     else if (a === "--no-profiles") args.noProfiles = true;
     else if (a === "--refresh") args.refresh = true;
     else if (a === "--local") args.localOnly = true;
+    else if (a === "--tg-token") args.tgToken = argv[++i] || "";
+    else if (a.startsWith("--tg-token=")) args.tgToken = a.slice(11);
+    else if (a === "--chat") args.chat = argv[++i] || "";
+    else if (a.startsWith("--chat=")) args.chat = a.slice(7);
+    else if (a === "--report") args.report = true;
+    else if (a === "--install") args.install = true;
+    else if (a === "--uninstall") args.uninstall = true;
     else if (!a.startsWith("-")) args._.push(a);
   }
   if (process.env.QODER_CN_YES === "1") args.yes = true;
@@ -169,6 +187,7 @@ function printHelp() {
   console.log(cmd("models", "List models"));
   console.log(cmd("usage", "Credits, tokens, and reset window"));
   console.log(cmd("wire", "Write Hermes / OpenCode config"));
+  console.log(cmd("telegram", "Usage bot for Telegram (/usage)"));
   console.log(cmd("uninstall", "Remove service and PATH shim"));
   console.log("");
   console.log(`  ${c.bold("Login")}`);
@@ -185,6 +204,11 @@ function printHelp() {
   console.log(`    ${c.mag("--no-profiles")}          ${c.dim("never touch Hermes profiles")}`);
   console.log(`    ${c.mag("--refresh")}              ${c.dim("usage: bypass account cache")}`);
   console.log(`    ${c.mag("--local")}                ${c.dim("usage: skip the Qoder account call")}`);
+  console.log(`    ${c.mag("--tg-token")} ${c.dim("<t>")}       ${c.dim("telegram: BotFather token (stored 600)")}`);
+  console.log(`    ${c.mag("--chat")} ${c.dim("<id>")}           ${c.dim("telegram: bind a chat id")}`);
+  console.log(`    ${c.mag("--install")}              ${c.dim("telegram: run as a service")}`);
+  console.log(`    ${c.mag("--report")}               ${c.dim("telegram: one-shot usage push")}`);
+  console.log(`    ${c.mag("--uninstall")}            ${c.dim("telegram: remove the service")}`);
   console.log("");
   console.log(`  ${c.bold("Walkthrough")}`);
   console.log(`    1  ${c.fg("qoder-cn-infer setup")}`);
@@ -344,15 +368,63 @@ function haveSystemdUser() {
   return r.status === 0;
 }
 
-function startSystemd() {
+function startSystemd(unit = UNIT_NAME) {
   spawnSync("systemctl", ["--user", "daemon-reload"], { encoding: "utf8" });
-  const en = spawnSync("systemctl", ["--user", "enable", "--now", UNIT_NAME], { encoding: "utf8" });
+  const en = spawnSync("systemctl", ["--user", "enable", "--now", unit], { encoding: "utf8" });
   spawnSync("loginctl", ["enable-linger", os.userInfo().username], { encoding: "utf8" });
   return en.status === 0;
 }
 
-function stopSystemd() {
-  spawnSync("systemctl", ["--user", "disable", "--now", UNIT_NAME], { encoding: "utf8" });
+function stopSystemd(unit = UNIT_NAME) {
+  spawnSync("systemctl", ["--user", "disable", "--now", unit], { encoding: "utf8" });
+}
+
+function writeTelegramUnit() {
+  const node = process.execPath;
+  const cli = path.join(ROOT, "bin", "qoder-cn-infer.mjs");
+  const unit = `[Unit]
+Description=Qoder CN usage Telegram bot
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=${ROOT}
+Environment=PATH=${path.dirname(node)}:/usr/bin:/bin
+ExecStart=${node} ${cli} telegram
+Restart=always
+RestartSec=3
+TimeoutStopSec=10
+
+[Install]
+WantedBy=default.target
+`;
+  fs.mkdirSync(path.dirname(TG_UNIT_PATH), { recursive: true });
+  fs.writeFileSync(TG_UNIT_PATH, unit);
+}
+
+function startTelegramNohup() {
+  ensureDirs();
+  const node = process.execPath;
+  const cli = path.join(ROOT, "bin", "qoder-cn-infer.mjs");
+  const out = fs.openSync(TG_LOG_PATH, "a");
+  const child = spawn(node, [cli, "telegram"], {
+    cwd: ROOT,
+    detached: true,
+    stdio: ["ignore", out, out],
+  });
+  child.unref();
+  fs.writeFileSync(TG_PID_PATH, String(child.pid));
+  return child.pid;
+}
+
+function stopTelegramNohup() {
+  try {
+    const pid = Number(fs.readFileSync(TG_PID_PATH, "utf8").trim());
+    if (pid) process.kill(pid, "SIGTERM");
+    fs.unlinkSync(TG_PID_PATH);
+  } catch {
+    /* ignore */
+  }
 }
 
 function startNohup(cfg) {
@@ -467,6 +539,16 @@ function wireHermes(cfg) {
   return wireHermesAt(cfg, path.join(os.homedir(), ".hermes", "config.yaml"), {
     setDefaultOnCreate: true,
   });
+}
+
+/** Is a Hermes Agent installed on this machine (dir or CLI on PATH)? */
+function detectHermesAgent() {
+  return fs.existsSync(path.join(os.homedir(), ".hermes")) || Boolean(which("hermes"));
+}
+
+/** Is OpenCode installed on this machine (config dir or CLI on PATH)? */
+function detectOpenCode() {
+  return fs.existsSync(path.join(os.homedir(), ".config", "opencode")) || Boolean(which("opencode"));
 }
 
 /**
@@ -823,10 +905,10 @@ function fmtDateTime(ms) {
 }
 
 /**
- * Credits + tokens: the Qoder account quota (same numbers qoderclicn shows)
- * and the local meter of everything this facade served.
+ * Collect the usage picture: live account quota from the running API (or a
+ * direct login fetch when the API is down) plus the local meter from disk.
  */
-async function cmdUsage(args) {
+async function collectUsage(args = {}) {
   const cfg = loadConfig();
   const healthy = await isHealthy(cfg);
   let account = null;
@@ -867,6 +949,15 @@ async function cmdUsage(args) {
       accountError = String(e?.message || e);
     }
   }
+  return { account, accountError, local, source, healthy, endpoint: endpoint(cfg), cfg };
+}
+
+/**
+ * Credits + tokens: the Qoder account quota (same numbers qoderclicn shows)
+ * and the local meter of everything this facade served.
+ */
+async function cmdUsage(args) {
+  const { account, accountError, local, source, healthy, cfg } = await collectUsage(args);
   if (args.json) {
     jsonOut({
       ok: true,
@@ -961,6 +1052,142 @@ async function cmdUsage(args) {
     printInfo("API not running — local meter read from disk:", usagePath());
     console.log("");
   }
+  return 0;
+}
+
+function loadTelegramConfig() {
+  try {
+    return JSON.parse(fs.readFileSync(TG_CONFIG_PATH, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+function saveTelegramConfig(tgc) {
+  fs.mkdirSync(CONFIG_DIR, { recursive: true });
+  fs.writeFileSync(TG_CONFIG_PATH, JSON.stringify(tgc, null, 2) + "\n");
+  try {
+    fs.chmodSync(TG_CONFIG_PATH, 0o600);
+  } catch {
+    /* ignore */
+  }
+}
+
+async function collectStatus() {
+  const cfg = loadConfig();
+  const healthy = await isHealthy(cfg);
+  return { running: healthy, login: hasLogin(), endpoint: endpoint(cfg) };
+}
+
+/**
+ * Telegram usage bot: /usage, /status, /help in any chat.
+ *   --tg-token <t>   BotFather token (stored in ~/.config/qoder-cn-infer/telegram.json, mode 600)
+ *   --chat <id>      pre-bind a chat id
+ *   --install        run under systemd (or nohup) and exit
+ *   --report         send one usage push to the bound chat and exit (cron-friendly)
+ *   --uninstall      stop and remove the service
+ */
+async function cmdTelegram(args) {
+  const tgc = loadTelegramConfig();
+  if (args.tgToken) {
+    tgc.token = args.tgToken.trim();
+    saveTelegramConfig(tgc);
+  }
+  const token = (args.tgToken || "").trim() || process.env.QODER_CN_INFER_TG_TOKEN || tgc.token || "";
+
+  if (args.uninstall) {
+    stopSystemd(TG_UNIT_NAME);
+    stopTelegramNohup();
+    try {
+      fs.unlinkSync(TG_UNIT_PATH);
+    } catch {
+      /* ignore */
+    }
+    if (args.json) jsonOut({ ok: true, removed: true });
+    else console.log(c.ok("telegram bot service removed (telegram.json kept)"));
+    return 0;
+  }
+  if (!token) {
+    if (args.json) {
+      jsonOut({
+        ok: false,
+        error: "token_missing",
+        hint: "qoder-cn-infer telegram --tg-token <BOTFATHER_TOKEN>",
+      });
+    } else {
+      printBanner("Telegram usage bot");
+      console.log("  " + c.bad("no bot token yet. Create one with @BotFather:"));
+      printInfo(
+        "1. Telegram → @BotFather → /newbot → copy the token",
+        "2. qoder-cn-infer telegram --tg-token <token> --install"
+      );
+    }
+    return 2;
+  }
+
+  const chatFromFlag = args.chat ? Number(args.chat) : null;
+  const state = {
+    chat_id: tgc.chat_id ?? (Number.isFinite(chatFromFlag) ? chatFromFlag : null),
+    offset: tgc.offset || 0,
+  };
+  const persist = () => {
+    tgc.chat_id = state.chat_id;
+    tgc.offset = state.offset;
+    saveTelegramConfig(tgc);
+  };
+  const bot = createBot({
+    token,
+    state,
+    persist,
+    collectUsage: () => collectUsage({ refresh: true }),
+    collectStatus,
+    log: (m) => {
+      if (!args.json) console.log(c.dim(`  tg  ${m}`));
+    },
+  });
+
+  if (args.install) {
+    if (!tgc.token) {
+      tgc.token = token;
+      saveTelegramConfig(tgc);
+    }
+    writeTelegramUnit();
+    let how = "nohup";
+    if (haveSystemdUser() && startSystemd(TG_UNIT_NAME)) how = "systemd";
+    else startTelegramNohup();
+    if (args.json) jsonOut({ ok: true, installed: { how }, state });
+    else {
+      printBanner("Telegram usage bot");
+      console.log(c.ok(`installed (${how}) — restarts itself`));
+      printInfo(
+        "Message your bot once to bind it, then send  /usage",
+        "One-shot push:  qoder-cn-infer telegram --report"
+      );
+    }
+    return 0;
+  }
+
+  if (args.report) {
+    try {
+      const chatId = await bot.sendReport();
+      if (args.json) jsonOut({ ok: true, sent_to: chatId });
+      else console.log(c.ok(`usage report sent to chat ${chatId}`));
+      return 0;
+    } catch (e) {
+      if (args.json) jsonOut({ ok: false, error: String(e?.message || e) });
+      else console.log("  " + c.bad(String(e?.message || e)));
+      return 1;
+    }
+  }
+
+  if (!args.json) {
+    printBanner("Telegram usage bot", "Ctrl+C to stop. /usage · /status · /help");
+    console.log(
+      c.dim(`  polling — ${state.chat_id ? `bound to chat ${state.chat_id}` : "first message binds this bot"}`)
+    );
+    console.log("");
+  }
+  await bot.run({});
   return 0;
 }
 
@@ -1086,19 +1313,22 @@ async function cmdSetup(args) {
   }
 
   printHeader("Clients");
-  let wireH = true;
-  let wireO = true;
+  const hermesHere = detectHermesAgent();
+  const opencodeHere = detectOpenCode();
+  let wireH = hermesHere;
+  let wireO = opencodeHere;
   if (interactive) {
-    wireH = await promptYesNo("  Wire Hermes Agent (~/.hermes/config.yaml)?", true);
-    wireO = await promptYesNo("  Wire OpenCode (~/.config/opencode/opencode.json)?", true);
+    wireH = await promptYesNo("  Wire Hermes Agent (~/.hermes/config.yaml)?", hermesHere);
+    wireO = await promptYesNo("  Wire OpenCode (~/.config/opencode/opencode.json)?", opencodeHere);
   }
   const h = wireH ? wireHermes(cfg) : { path: "(skipped)" };
   const o = wireO ? wireOpenCode(cfg) : { path: "(skipped)" };
   if (wireH) printOk(`Hermes    ${h.path}`);
-  else printInfo("Hermes skipped");
+  else printInfo(hermesHere ? "Hermes skipped" : "Hermes not detected — skipped (qoder-cn-infer wire to force)");
   if (wireO) printOk(`OpenCode  ${o.path}`);
-  else printInfo("OpenCode skipped");
-  step("clients", true, `wired → ${endpoint(cfg)}`);
+  else printInfo(opencodeHere ? "OpenCode skipped" : "OpenCode not detected — skipped (qoder-cn-infer wire to force)");
+  const clientBits = [wireH ? "Hermes" : "", wireO ? "OpenCode" : ""].filter(Boolean);
+  step("clients", true, clientBits.length ? `wired ${clientBits.join(" + ")}` : "none detected — endpoint only");
 
   printHeader("Hermes bot profiles");
   printInfo("Telegram gateway bots run as Hermes profiles under ~/.hermes/profiles/.");
@@ -1215,6 +1445,7 @@ async function main() {
     models: cmdModels,
     usage: cmdUsage,
     wire: cmdWire,
+    telegram: cmdTelegram,
     uninstall: cmdUninstall,
   };
   const fn = table[cmd];
