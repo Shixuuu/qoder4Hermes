@@ -101,7 +101,7 @@ test("qoder-cn-infer help and version exit 0", () => {
   assert.match(help.stdout, /--yes/);
   const ver = spawnSync(process.execPath, [CLI, "version", "--json"], { encoding: "utf8" });
   assert.equal(ver.status, 0, ver.stderr);
-  assert.match(ver.stdout, /1\.5\.0/);
+  assert.match(ver.stdout, /1\.5\.1/);
 });
 
 test("CLI runs when invoked through the installed symlink shim", () => {

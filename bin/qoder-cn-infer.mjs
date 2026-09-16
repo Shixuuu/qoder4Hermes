@@ -34,7 +34,7 @@ import { claimStatus, runClaim } from "../qoder_cn_endpoint/claim.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "..");
-const VERSION = "1.5.0";
+const VERSION = "1.5.1";
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 8787;
 const CONFIG_DIR = path.join(os.homedir(), ".config", "qoder-cn-infer");

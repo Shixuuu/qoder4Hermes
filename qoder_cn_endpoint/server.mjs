@@ -6,6 +6,7 @@
  * stream !== false → OpenAI SSE (Hermes default). stream:false → JSON.
  */
 import http from "node:http";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -232,12 +233,18 @@ const server = http.createServer(async (req, res) => {
 const isMain = (() => {
   // realpath-aware so a symlinked entry point still starts the server.
   try {
-    return (
-      Boolean(process.argv[1]) &&
-      fs.realpathSync(path.resolve(process.argv[1])) ===
-        fs.realpathSync(fileURLToPath(import.meta.url))
-    );
-  } catch {
+    const entry = process.argv[1]
+      ? fs.realpathSync(path.resolve(process.argv[1]))
+      : "";
+    const self = fs.realpathSync(fileURLToPath(import.meta.url));
+    if (entry && entry !== self && path.basename(entry) === path.basename(self)) {
+      console.error(
+        `[qoder-cn-infer] not starting: entry is ${entry} but module is ${self}`
+      );
+    }
+    return Boolean(entry) && entry === self;
+  } catch (e) {
+    console.error(`[qoder-cn-infer] entry check failed: ${String(e?.message || e)}`);
     return false;
   }
 })();
