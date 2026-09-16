@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { parseArgs } from "../bin/qoder-cn-infer.mjs";
+import { parseArgs, formatUsagePlain } from "../bin/qoder-cn-infer.mjs";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const CLI = path.join(ROOT, "bin", "qoder-cn-infer.mjs");
@@ -39,6 +41,43 @@ test("parseArgs collects telegram flags", () => {
   assert.equal(b.report, true);
   const c = parseArgs(["telegram", "--uninstall"]);
   assert.equal(c.uninstall, true);
+  const d = parseArgs(["usage", "--plain"]);
+  assert.equal(d.plain, true);
+});
+
+test("formatUsagePlain renders the compact chat summary", () => {
+  const out = formatUsagePlain({
+    account: {
+      displayMode: "qoder",
+      qoderUsage: {
+        userType: "personal_professional_trial",
+        totalUsagePercentage: 0.3,
+        expiresAt: 1789967681429,
+        isQuotaExceeded: false,
+        userQuota: { used: 87, total: 300, remaining: 213, unit: "credits" },
+      },
+    },
+    local: {
+      totals: {
+        requests: 4,
+        prompt_tokens: 287,
+        completion_tokens: 137,
+        total_tokens: 424,
+        reasoning_tokens: 119,
+        credits: 0.0133,
+      },
+      today: { total_tokens: 424, credits: 0.0133 },
+    },
+    source: "live",
+    endpoint: "http://127.0.0.1:8787/v1",
+  });
+  assert.match(out, /Qoder CN credits: 87\/300 used \(30\.0%\) · 213 credits remaining/);
+  assert.match(out, /Resets .* · plan personal_professional_trial/);
+  assert.match(out, /Local: 4 reqs · 424 tokens \(287 in \/ 137 out · 119 thinking\) · 0\.0133 credits/);
+  assert.match(out, /API http:\/\/127\.0\.0\.1:8787\/v1 · source live/);
+  // error / signed-out fallbacks
+  assert.match(formatUsagePlain({ accountError: "quota HTTP 401" }), /Account: quota HTTP 401/);
+  assert.match(formatUsagePlain({}), /not signed in/);
 });
 
 test("parseArgs login --browser and --pat --token", () => {
@@ -61,5 +100,18 @@ test("qoder-cn-infer help and version exit 0", () => {
   assert.match(help.stdout, /--yes/);
   const ver = spawnSync(process.execPath, [CLI, "version", "--json"], { encoding: "utf8" });
   assert.equal(ver.status, 0, ver.stderr);
-  assert.match(ver.stdout, /1\.2\.0/);
+  assert.match(ver.stdout, /1\.3\.0/);
+});
+
+test("CLI runs when invoked through the installed symlink shim", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qci-link-"));
+  try {
+    const link = path.join(dir, "qoder-cn-infer");
+    fs.symlinkSync(CLI, link);
+    const r = spawnSync(process.execPath, [link, "version", "--json"], { encoding: "utf8" });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /1\.3\.0/, "symlinked invocation must execute main()");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

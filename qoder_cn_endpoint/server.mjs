@@ -229,9 +229,18 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-const isMain =
-  Boolean(process.argv[1]) &&
-  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+const isMain = (() => {
+  // realpath-aware so a symlinked entry point still starts the server.
+  try {
+    return (
+      Boolean(process.argv[1]) &&
+      fs.realpathSync(path.resolve(process.argv[1])) ===
+        fs.realpathSync(fileURLToPath(import.meta.url))
+    );
+  } catch {
+    return false;
+  }
+})();
 
 if (isMain) {
   // Hermes agent loops (tools + vision) can idle longer than Node's 5m default.

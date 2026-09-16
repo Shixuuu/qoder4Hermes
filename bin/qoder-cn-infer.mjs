@@ -33,7 +33,7 @@ import { createBot } from "../qoder_cn_endpoint/telegram.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "..");
-const VERSION = "1.2.0";
+const VERSION = "1.3.0";
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 8787;
 const CONFIG_DIR = path.join(os.homedir(), ".config", "qoder-cn-infer");
@@ -101,6 +101,7 @@ function parseArgs(argv) {
     report: false,
     install: false,
     uninstall: false,
+    plain: false,
   };
   const addProfiles = (v) => {
     for (const s of String(v || "").split(",")) {
@@ -135,6 +136,7 @@ function parseArgs(argv) {
     else if (a === "--report") args.report = true;
     else if (a === "--install") args.install = true;
     else if (a === "--uninstall") args.uninstall = true;
+    else if (a === "--plain") args.plain = true;
     else if (!a.startsWith("-")) args._.push(a);
   }
   if (process.env.QODER_CN_YES === "1") args.yes = true;
@@ -204,6 +206,7 @@ function printHelp() {
   console.log(`    ${c.mag("--no-profiles")}          ${c.dim("never touch Hermes profiles")}`);
   console.log(`    ${c.mag("--refresh")}              ${c.dim("usage: bypass account cache")}`);
   console.log(`    ${c.mag("--local")}                ${c.dim("usage: skip the Qoder account call")}`);
+  console.log(`    ${c.mag("--plain")}                ${c.dim("usage: compact text for chat relays")}`);
   console.log(`    ${c.mag("--tg-token")} ${c.dim("<t>")}       ${c.dim("telegram: BotFather token (stored 600)")}`);
   console.log(`    ${c.mag("--chat")} ${c.dim("<id>")}           ${c.dim("telegram: bind a chat id")}`);
   console.log(`    ${c.mag("--install")}              ${c.dim("telegram: run as a service")}`);
@@ -500,9 +503,35 @@ function hermesProviderBlock(cfg) {
 }
 
 /**
- * Merge the qoder-cn-infer provider block into a Hermes config file.
- * Never touches model.default in existing files; only creates it for a fresh
- * main config. Base URLs of an existing qoder block are refreshed in place.
+ * The /qoder Telegram quick command: runs the usage CLI directly in the
+ * gateway process (no LLM turn, 30s cap) so `/qoder` replies instantly.
+ */
+const QUICK_COMMAND_CMD = '"$HOME/.local/bin/qoder-cn-infer usage --refresh"';
+
+function hermesQuickCommandMarker(pad = "") {
+  return `${pad}quick_commands:\n${pad}  qoder:\n${pad}    type: exec\n${pad}    command: ${QUICK_COMMAND_CMD}`;
+}
+
+/** Merge the /qoder quick command into config text; returns {text, added}. */
+function ensureQuickCommand(text) {
+  if (text.includes("qoder-cn-infer usage --refresh")) return { text, added: false };
+  let m = text.match(/^([ \t]*)quick_commands:[ \t]*\{[ \t]*\}[ \t]*$/m);
+  if (m) {
+    return { text: text.replace(m[0], hermesQuickCommandMarker(m[1])), added: true };
+  }
+  m = text.match(/^([ \t]*)quick_commands:[ \t]*$/m);
+  if (m) {
+    // Replace just the key line; any existing entries stay below the new one.
+    return { text: text.replace(m[0], hermesQuickCommandMarker(m[1])), added: true };
+  }
+  return { text: `${text.replace(/\s*$/, "")}\n\n${hermesQuickCommandMarker()}\n`, added: true };
+}
+
+/**
+ * Merge the qoder-cn-infer provider block (and the /qoder quick command) into
+ * a Hermes config file. Never touches model.default in existing files; only
+ * creates it for a fresh main config. Base URLs of an existing qoder block are
+ * refreshed in place.
  */
 function wireHermesAt(cfg, configPath, { setDefaultOnCreate = false } = {}) {
   const block = hermesProviderBlock(cfg);
@@ -511,10 +540,15 @@ function wireHermesAt(cfg, configPath, { setDefaultOnCreate = false } = {}) {
     const head = setDefaultOnCreate
       ? `model:\n  default: qwen3.8-max\n  provider: qoder-cn-infer\n`
       : `# Hermes profile config — qoder-cn-infer provider (default model untouched)\n`;
-    fs.writeFileSync(configPath, `${head}providers:\n${block}`);
-    return { ok: true, path: configPath, created: true };
+    fs.writeFileSync(
+      configPath,
+      `${head}providers:\n${block}\n${hermesQuickCommandMarker()}\n`
+    );
+    return { ok: true, path: configPath, created: true, quick_command: true };
   }
   let text = fs.readFileSync(configPath, "utf8");
+  const ensured = ensureQuickCommand(text);
+  text = ensured.text;
   if (
     /^\s+qoder-cn-infer:/m.test(text) ||
     /^\s+qoder-cn:/m.test(text) ||
@@ -522,7 +556,7 @@ function wireHermesAt(cfg, configPath, { setDefaultOnCreate = false } = {}) {
   ) {
     text = text.replace(/base_url:\s*http:\/\/127\.0\.0\.1:\d+(\/v1)?/g, `base_url: ${endpoint(cfg)}`);
     fs.writeFileSync(configPath, text);
-    return { ok: true, path: configPath, updated: true };
+    return { ok: true, path: configPath, updated: true, quick_command: ensured.added };
   }
   if (/^providers:\s*$/m.test(text)) {
     text = text.replace(/^providers:\s*$/m, `providers:\n${block.trimEnd()}`);
@@ -532,7 +566,7 @@ function wireHermesAt(cfg, configPath, { setDefaultOnCreate = false } = {}) {
     text += `\nproviders:\n${block}`;
   }
   fs.writeFileSync(configPath, text);
-  return { ok: true, path: configPath, updated: true };
+  return { ok: true, path: configPath, updated: true, quick_command: ensured.added };
 }
 
 function wireHermes(cfg) {
@@ -953,6 +987,47 @@ async function collectUsage(args = {}) {
 }
 
 /**
+ * Compact one-screen usage text: chat relays, quick commands, cron.
+ * Plain lines, no ANSI, no banner.
+ */
+function formatUsagePlain({ account, accountError, local, source, endpoint: ep } = {}) {
+  const lines = [];
+  const u = account?.qoderUsage;
+  if (u) {
+    const q = u.userQuota;
+    const pct = (Number(u.totalUsagePercentage) || 0) * 100;
+    if (q) {
+      lines.push(
+        `Qoder CN credits: ${fmtQuotaNumber(q.used)}/${fmtQuotaNumber(q.total)} used (${pct.toFixed(1)}%) · ${fmtQuotaNumber(q.remaining)} ${q.unit || "credits"} remaining`
+      );
+    } else {
+      lines.push(`Qoder CN usage: ${pct.toFixed(1)}% of plan`);
+    }
+    if (u.expiresAt) {
+      lines.push(`Resets ${fmtDateTime(u.expiresAt)} (${formatResetIn(u.expiresAt)}) · plan ${u.userType || "?"}`);
+    }
+    if (u.isQuotaExceeded) lines.push("Quota exceeded — switch models or wait for the reset.");
+  } else if (account?.displayMode === "enterprise") {
+    lines.push(`Enterprise plan — usage: ${account.enterpriseUsage?.detailUrl || ""}`);
+  } else if (accountError) {
+    lines.push(`Account: ${accountError}`);
+  } else {
+    lines.push("Account: not signed in — qoder-cn-infer login");
+  }
+  const t = local?.totals;
+  if (t) {
+    lines.push(
+      `Local: ${t.requests} reqs · ${formatCompact(t.total_tokens)} tokens (${formatCompact(t.prompt_tokens)} in / ${formatCompact(t.completion_tokens)} out · ${formatCompact(t.reasoning_tokens)} thinking) · ${fmtCredits(t.credits)} credits`
+    );
+    lines.push(
+      `Today: ${formatCompact(local.today?.total_tokens || 0)} tokens · ${fmtCredits(local.today?.credits)} credits`
+    );
+  }
+  if (ep) lines.push(`API ${ep} · source ${source || "?"}`);
+  return lines.join("\n");
+}
+
+/**
  * Credits + tokens: the Qoder account quota (same numbers qoderclicn shows)
  * and the local meter of everything this facade served.
  */
@@ -968,6 +1043,12 @@ async function cmdUsage(args) {
       endpoint: endpoint(cfg),
       server_running: healthy,
     });
+    return 0;
+  }
+  if (args.plain) {
+    console.log(
+      formatUsagePlain({ account, accountError, local, source, endpoint: endpoint(cfg) })
+    );
     return 0;
   }
 
@@ -1214,6 +1295,9 @@ function cmdWire(args) {
     });
   else {
     console.log(c.ok(`Hermes    ${h.path}`));
+    if (h.quick_command) {
+      console.log(c.dim("          /qoder quick command added — restart the Hermes gateway to load it"));
+    }
     console.log(c.ok(`OpenCode  ${o.path}`));
     if (profileResult) printProfileResults(profileResult);
     else console.log(c.dim("profiles  skipped (--profiles wires Hermes bot profiles)"));
@@ -1457,9 +1541,19 @@ async function main() {
   return await fn(args);
 }
 
-const isMain =
-  Boolean(process.argv[1]) &&
-  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+const isMain = (() => {
+  // realpath-aware: the installed CLI is a symlink (~/.local/bin/qoder-cn-infer),
+  // so path.resolve(argv[1]) never equals the module's real path. Compare trees.
+  try {
+    return (
+      Boolean(process.argv[1]) &&
+      fs.realpathSync(path.resolve(process.argv[1])) ===
+        fs.realpathSync(fileURLToPath(import.meta.url))
+    );
+  } catch {
+    return false;
+  }
+})();
 if (isMain) {
   main().then((code) => process.exit(code ?? 0), (err) => {
     console.error(err);
@@ -1472,6 +1566,7 @@ export {
   hasLogin,
   endpoint,
   printHelp,
+  formatUsagePlain,
   wireHermesAt,
   wireHermesProfiles,
   detectHermesProfiles,

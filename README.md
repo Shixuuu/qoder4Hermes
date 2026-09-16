@@ -114,6 +114,7 @@ Same quota the Qoder CLI shows, plus a local meter of what this facade served.
 
 ```bash
 qoder-cn-infer usage             # credits used / remaining, reset time, tokens
+qoder-cn-infer usage --plain     # compact one-screen text (chat relays, cron)
 qoder-cn-infer usage --json      # machine-readable
 qoder-cn-infer usage --refresh   # bypass the 60s account cache
 curl -s http://127.0.0.1:8787/usage   # same data from the API
@@ -154,6 +155,20 @@ Prefer a scheduled digest? `--report` sends one push and exits, so any scheduler
 
 Hermes agents: copy the bundled skill — `cp -r integrations/hermes-skill/qoder-usage ~/.hermes/skills/` — and any Hermes bot (Telegram profiles included) can answer plain "how much Qoder quota is left" questions.
 
+### Slash command in Hermes gateways (/qoder)
+
+Any Hermes Telegram gateway (or any other platform) can expose usage as a native slash command that answers instantly, without an LLM call — add to that profile's `config.yaml` and restart the gateway:
+
+```yaml
+quick_commands:
+  qoder:
+    type: exec
+    description: Qoder CN credits and served tokens
+    command: qoder-cn-infer usage --plain
+```
+
+Then `/qoder` in Telegram replies with the credits line, reset window, and the served-token meter. Note `/usage` is already a Hermes builtin (agent token usage), so use `/qoder` (or any free name).
+
 ---
 
 ## Hermes Telegram gateways (bot profiles)
@@ -167,6 +182,17 @@ qoder-cn-infer wire --no-profiles     # skip profiles entirely
 ```
 
 Wiring only adds the provider block to a profile's `config.yaml`; it never changes that profile's default model or provider, and profiles without a `config.yaml` are skipped and reported. `qoder-cn-infer doctor` shows the wired state of each profile.
+
+Every wired Hermes config also gets a **`/qoder` quick command** — a `quick_commands` exec entry that runs the usage CLI directly in the gateway, so `/qoder` in any Telegram chat with that bot replies with the usage report instantly and without an LLM turn:
+
+```yaml
+quick_commands:
+  qoder:
+    type: exec
+    command: "$HOME/.local/bin/qoder-cn-infer usage --refresh"
+```
+
+Restart the gateway once after wiring to load it.
 
 To actually run a bot on your Qoder quota, switch that profile's model and restart its gateway:
 
