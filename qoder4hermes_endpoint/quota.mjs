@@ -173,7 +173,7 @@ export async function fetchQuotaUsage(sess, httpsRequest = defaultHttpsRequest, 
   const token = bearerOf(sess);
   const res = await getJson(endpointsFor(opts.region).quotaUsageUrl, token, httpsRequest);
   if (res.status === 401) {
-    const err = new Error("quota HTTP 401 — login expired, run  qoder-cn-infer login");
+    const err = new Error("quota HTTP 401 — login expired, run  qoder4hermes login");
     err.status = 401;
     throw err;
   }

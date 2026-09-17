@@ -46,7 +46,7 @@ export function loadCliLogin(home = os.homedir(), region = "cn") {
 export const STORED_PAT_PATH = path.join(
   os.homedir(),
   ".config",
-  "qoder-cn-infer",
+  "qoder4hermes",
   "pat"
 );
 

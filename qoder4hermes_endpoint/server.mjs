@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Loopback OpenAI-compatible facade for Qoder CN model transport.
- * Usage: node qoder_cn_endpoint/server.mjs
+ * Usage: node qoder4hermes_endpoint/server.mjs
  *
  * stream !== false → OpenAI SSE (Hermes default). stream:false → JSON.
  */
@@ -21,9 +21,9 @@ import { endpointsFor, resolveRegion } from "./regions.mjs";
 import { fetchAccountUsage } from "./quota.mjs";
 import { usageSummary } from "./usage_store.mjs";
 
-const host = process.env.QODER_CN_INFER_HOST || "127.0.0.1";
-const port = Number(process.env.QODER_CN_INFER_PORT || 8787);
-// Region for this process: QODER_CN_INFER_REGION → config.json region → cn.
+const host = process.env.QODER4HERMES_HOST || process.env.QODER_CN_INFER_HOST || "127.0.0.1";
+const port = Number(process.env.QODER4HERMES_PORT || process.env.QODER_CN_INFER_PORT || 8787);
+// Region for this process: QODER4HERMES_REGION → config.json region → cn.
 const region = resolveRegion();
 const ep = endpointsFor(region);
 
@@ -90,7 +90,7 @@ function send(res, status, obj) {
   res.end(body);
 }
 
-const USAGE_CACHE_TTL_MS = Number(process.env.QODER_CN_INFER_USAGE_TTL_MS || 60000);
+const USAGE_CACHE_TTL_MS = Number(process.env.QODER4HERMES_USAGE_TTL_MS || process.env.QODER_CN_INFER_USAGE_TTL_MS || 60000);
 const accountCache = { at: 0, value: null };
 
 /**
@@ -253,12 +253,12 @@ const isMain = (() => {
     const self = fs.realpathSync(fileURLToPath(import.meta.url));
     if (entry && entry !== self && path.basename(entry) === path.basename(self)) {
       console.error(
-        `[qoder-cn-infer] not starting: entry is ${entry} but module is ${self}`
+        `[qoder4hermes] not starting: entry is ${entry} but module is ${self}`
       );
     }
     return Boolean(entry) && entry === self;
   } catch (e) {
-    console.error(`[qoder-cn-infer] entry check failed: ${String(e?.message || e)}`);
+    console.error(`[qoder4hermes] entry check failed: ${String(e?.message || e)}`);
     return false;
   }
 })();
@@ -270,7 +270,7 @@ if (isMain) {
   server.timeout = 0;
   server.keepAliveTimeout = 120000;
   server.listen(port, host, () => {
-    console.log(`qoder-cn inference facade http://${host}:${port}/v1  ${ep.label} (region ${region})`);
+    console.log(`qoder4hermes inference facade http://${host}:${port}/v1  ${ep.label} (region ${region})`);
   });
 }
 

@@ -1,13 +1,13 @@
 # Merge into ~/.hermes/config.yaml
-# Local CN model transport. Rates are Qoder CN credit multipliers from the live catalog.
+# Local Qoder endpoint for Hermes. Rates are Qoder credit multipliers from the live catalog.
 
 model:
   default: qwen3.8-max
-  provider: custom:qoder-cn-local
+  provider: custom:qoder4hermes
 
 providers:
-  qoder-cn-local:
-    name: Qoder CN (inference facade)
+  qoder4hermes:
+    name: Qoder (local endpoint)
     base_url: http://127.0.0.1:8787/v1
     api_key: not-used
     transport: chat_completions

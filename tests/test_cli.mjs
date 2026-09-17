@@ -5,10 +5,10 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { parseArgs, formatUsagePlain } from "../bin/qoder-cn-infer.mjs";
+import { parseArgs, formatUsagePlain } from "../bin/qoder4hermes.mjs";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
-const CLI = path.join(ROOT, "bin", "qoder-cn-infer.mjs");
+const CLI = path.join(ROOT, "bin", "qoder4hermes.mjs");
 
 test("parseArgs understands --yes and --json", () => {
   const a = parseArgs(["setup", "--yes", "--json", "--port", "8787"]);
@@ -89,10 +89,10 @@ test("parseArgs login --browser and --pat --token", () => {
   assert.equal(p.token, "pt-example");
 });
 
-test("qoder-cn-infer help and version exit 0", () => {
+test("qoder4hermes help and version exit 0", () => {
   const help = spawnSync(process.execPath, [CLI, "help"], { encoding: "utf8" });
   assert.equal(help.status, 0, help.stderr);
-  assert.match(help.stdout, /qoder-cn-infer setup/);
+  assert.match(help.stdout, /qoder4hermes setup/);
   assert.match(help.stdout, /usage/);
   assert.match(help.stdout, /claim/);
   assert.match(help.stdout, /--profiles/);
@@ -101,13 +101,13 @@ test("qoder-cn-infer help and version exit 0", () => {
   assert.match(help.stdout, /--yes/);
   const ver = spawnSync(process.execPath, [CLI, "version", "--json"], { encoding: "utf8" });
   assert.equal(ver.status, 0, ver.stderr);
-  assert.match(ver.stdout, /1\.6\.0/);
+  assert.match(ver.stdout, /2\.0\.0/);
 });
 
 test("CLI runs when invoked through the installed symlink shim", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qci-link-"));
   try {
-    const link = path.join(dir, "qoder-cn-infer");
+    const link = path.join(dir, "qoder4hermes");
     fs.symlinkSync(CLI, link);
     const r = spawnSync(process.execPath, [link, "version", "--json"], { encoding: "utf8" });
     assert.equal(r.status, 0, r.stderr);

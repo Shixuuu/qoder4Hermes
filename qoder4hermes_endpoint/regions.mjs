@@ -8,7 +8,7 @@
  * (inference api2.qoder.sh, center center.qoder.sh, openapi openapi.qoder.sh).
  * The official CLI may elect a different api1/api2/api3 host for a network
  * and caches that for 24h; the facade stays on the documented default and
- * takes an explicit override (QODER_CN_INFER_GLOBAL_INFER_HOST) instead of
+ * takes an explicit override (QODER4HERMES_GLOBAL_INFER_HOST) instead of
  * replicating the election.
  */
 import fs from "node:fs";
@@ -44,10 +44,13 @@ export const REGION_DEFS = {
 };
 
 export function configDir() {
-  return (
-    process.env.QODER_CN_INFER_CONFIG_DIR ||
-    path.join(os.homedir(), ".config", "qoder-cn-infer")
-  );
+  const env = process.env.QODER4HERMES_CONFIG_DIR || process.env.QODER_CN_INFER_CONFIG_DIR;
+  if (env) return env;
+  const current = path.join(os.homedir(), ".config", "qoder4hermes");
+  const legacy = path.join(os.homedir(), ".config", "qoder-cn-infer");
+  if (fs.existsSync(current)) return current;
+  if (fs.existsSync(legacy)) return legacy;
+  return current;
 }
 
 function readConfigSafe() {
@@ -73,12 +76,12 @@ export function normalizeRegion(value, fallback = "cn") {
 /**
  * Region in effect for this process: a model token per region never leaks
  * into the other one, so this is the single source every module resolves.
- *   explicit arg → QODER_CN_INFER_REGION → config.json `region` → "cn"
+ *   explicit arg → QODER4HERMES_REGION → config.json `region` → "cn"
  */
 export function resolveRegion(explicit = "") {
   return (
     parseRegion(explicit) ||
-    parseRegion(process.env.QODER_CN_INFER_REGION) ||
+    parseRegion(process.env.QODER4HERMES_REGION || process.env.QODER_CN_INFER_REGION) ||
     parseRegion(readConfigSafe().region) ||
     "cn"
   );
@@ -112,12 +115,12 @@ function httpsOrigin(value) {
 
 /**
  * Inference host for the global region: api2.qoder.sh by default, overridden
- * by QODER_CN_INFER_GLOBAL_INFER_HOST or config.json `global_infer_host`
+ * by QODER4HERMES_GLOBAL_INFER_HOST or config.json `global_infer_host`
  * (https origin only; invalid values are ignored, like the CLI does).
  */
 export function globalInferBase() {
   return (
-    httpsOrigin(process.env.QODER_CN_INFER_GLOBAL_INFER_HOST) ||
+    httpsOrigin(process.env.QODER4HERMES_GLOBAL_INFER_HOST || process.env.QODER_CN_INFER_GLOBAL_INFER_HOST) ||
     httpsOrigin(readConfigSafe().global_infer_host) ||
     REGION_DEFS.global.inferBase
   );

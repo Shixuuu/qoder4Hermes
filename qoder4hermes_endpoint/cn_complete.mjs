@@ -40,7 +40,7 @@ const numOrNull = (v) => {
 
 /** Upstream usage events are forwarded as OpenAI usage chunks unless disabled. */
 function usageChunksEnabled() {
-  const v = String(process.env.QODER_CN_INFER_USAGE_CHUNKS ?? "").toLowerCase();
+  const v = String(process.env.QODER4HERMES_USAGE_CHUNKS ?? process.env.QODER_CN_INFER_USAGE_CHUNKS ?? "").toLowerCase();
   return v !== "0" && v !== "false" && v !== "off";
 }
 

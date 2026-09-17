@@ -10,8 +10,8 @@ import {
   resolveModelKey,
   openaiModelList,
   streamOpenAiSse,
-} from "../qoder_cn_endpoint/cn_complete.mjs";
-import { wantStream, handleChatCompletions, apiPath } from "../qoder_cn_endpoint/server.mjs";
+} from "../qoder4hermes_endpoint/cn_complete.mjs";
+import { wantStream, handleChatCompletions, apiPath } from "../qoder4hermes_endpoint/server.mjs";
 import {
   openaiListFromGateway,
   formatRate,
@@ -21,10 +21,10 @@ import {
   parseContextWindows,
   effectiveContextLength,
   CHAT_FALLBACK,
-} from "../qoder_cn_endpoint/catalog.mjs";
-import { qoderDecode, CHAT_URL, MODEL_LIST_URL } from "../qoder_cn_endpoint/cn_cosy.mjs";
-import { decryptCliUserFile } from "../qoder_cn_endpoint/cn_auth.mjs";
-import { parseDsmlToolCalls, parseToolMarkup } from "../qoder_cn_endpoint/tools.mjs";
+} from "../qoder4hermes_endpoint/catalog.mjs";
+import { qoderDecode, CHAT_URL, MODEL_LIST_URL } from "../qoder4hermes_endpoint/cn_cosy.mjs";
+import { decryptCliUserFile } from "../qoder4hermes_endpoint/cn_auth.mjs";
+import { parseDsmlToolCalls, parseToolMarkup } from "../qoder4hermes_endpoint/tools.mjs";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -34,13 +34,13 @@ function readSrc(rel) {
 
 test("shipped completion modules never spawn qoder CLI", () => {
   const files = [
-    "qoder_cn_endpoint/cn_complete.mjs",
-    "qoder_cn_endpoint/cn_auth.mjs",
-    "qoder_cn_endpoint/cn_cosy.mjs",
-    "qoder_cn_endpoint/catalog.mjs",
-    "qoder_cn_endpoint/regions.mjs",
-    "qoder_cn_endpoint/tools.mjs",
-    "qoder_cn_endpoint/server.mjs",
+    "qoder4hermes_endpoint/cn_complete.mjs",
+    "qoder4hermes_endpoint/cn_auth.mjs",
+    "qoder4hermes_endpoint/cn_cosy.mjs",
+    "qoder4hermes_endpoint/catalog.mjs",
+    "qoder4hermes_endpoint/regions.mjs",
+    "qoder4hermes_endpoint/tools.mjs",
+    "qoder4hermes_endpoint/server.mjs",
   ];
   for (const rel of files) {
     const src = readSrc(rel);

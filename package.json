@@ -1,22 +1,22 @@
 {
-  "name": "qoder-cn-infer",
-  "version": "1.6.0",
-  "description": "Use your Qoder CN quota from Hermes, OpenCode, or any OpenAI-compatible client — without the Qoder CLI harness.",
+  "name": "qoder4hermes",
+  "version": "2.0.0",
+  "description": "Use your Qoder quota from Hermes: a local OpenAI-compatible endpoint. Hermes-first; other harnesses may work but are untested. Experimental setup CLI.",
   "type": "module",
   "bin": {
-    "qoder-cn-infer": "./bin/qoder-cn-infer.mjs"
+    "qoder4hermes": "./bin/qoder4hermes.mjs"
   },
   "engines": {
     "node": ">=18"
   },
   "scripts": {
-    "start": "node qoder_cn_endpoint/server.mjs",
-    "setup": "node bin/qoder-cn-infer.mjs setup",
+    "start": "node qoder4hermes_endpoint/server.mjs",
+    "setup": "node bin/qoder4hermes.mjs setup",
     "test": "node --test tests/test_cn_complete.mjs tests/test_cli.mjs tests/test_usage.mjs tests/test_telegram.mjs tests/test_claim.mjs tests/test_regions.mjs"
   },
   "files": [
     "bin",
-    "qoder_cn_endpoint",
+    "qoder4hermes_endpoint",
     "scripts",
     "examples",
     "integrations",
@@ -26,19 +26,20 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Shixuuu/qoder-cn-infer.git"
+    "url": "git+https://github.com/Shixuuu/qoder4Hermes.git"
   },
   "keywords": [
     "qoder",
     "qoder-cn",
     "openai",
+    "openai-compatible",
     "hermes",
-    "opencode",
+    "hermes-agent",
     "inference"
   ],
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/Shixuuu/qoder-cn-infer/issues"
+    "url": "https://github.com/Shixuuu/qoder4Hermes/issues"
   },
-  "homepage": "https://github.com/Shixuuu/qoder-cn-infer#readme"
+  "homepage": "https://github.com/Shixuuu/qoder4Hermes#readme"
 }

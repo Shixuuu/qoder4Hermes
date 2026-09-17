@@ -4,11 +4,11 @@ After=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/.local/share/qoder-cn-infer
-Environment=QODER_CN_INFER_HOST=127.0.0.1
-Environment=QODER_CN_INFER_PORT=8787
+WorkingDirectory=%h/.local/share/qoder4hermes
+Environment=QODER4HERMES_HOST=127.0.0.1
+Environment=QODER4HERMES_PORT=8787
 Environment=PATH=%h/.local/bin:/usr/bin:/bin
-ExecStart=/usr/bin/env node %h/.local/share/qoder-cn-infer/qoder_cn_endpoint/server.mjs
+ExecStart=/usr/bin/env node %h/.local/share/qoder4hermes/qoder4hermes_endpoint/server.mjs
 Restart=always
 RestartSec=2
 TimeoutStopSec=10

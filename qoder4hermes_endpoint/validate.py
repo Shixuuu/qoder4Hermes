@@ -1,6 +1,6 @@
 """Structural checks for the Qoder CN custom-endpoint writeup and configs.
 
-This is the shipped entry point used by tests and `python3 -m qoder_cn_endpoint`.
+This is the shipped entry point used by tests and `python3 -m qoder4hermes_endpoint`.
 It reads the real README and example files; it does not re-implement a bridge.
 """
 

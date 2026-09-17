@@ -15,22 +15,22 @@ import {
   fetchAccountUsage,
   formatResetIn,
   QUOTA_USAGE_URL,
-} from "../qoder_cn_endpoint/quota.mjs";
+} from "../qoder4hermes_endpoint/quota.mjs";
 import {
   recordUsage,
   readUsage,
   usageSummary,
   formatCompact,
   flushUsage,
-} from "../qoder_cn_endpoint/usage_store.mjs";
-import { completeChat, streamOpenAiSse } from "../qoder_cn_endpoint/cn_complete.mjs";
-import { handleUsage } from "../qoder_cn_endpoint/server.mjs";
+} from "../qoder4hermes_endpoint/usage_store.mjs";
+import { completeChat, streamOpenAiSse } from "../qoder4hermes_endpoint/cn_complete.mjs";
+import { handleUsage } from "../qoder4hermes_endpoint/server.mjs";
 import {
   wireHermesAt,
   detectHermesProfiles,
   wireHermesProfiles,
   profileIsWired,
-} from "../bin/qoder-cn-infer.mjs";
+} from "../bin/qoder4hermes.mjs";
 
 function tmpDir(prefix = "qci-test-") {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -177,7 +177,7 @@ test("formatResetIn renders days and hours", () => {
 
 test("usage store records totals, models, and days (isolated dir)", async () => {
   const dir = tmpDir();
-  process.env.QODER_CN_INFER_STATE_DIR = dir;
+  process.env.QODER4HERMES_STATE_DIR = dir;
   try {
     await recordUsage({
       model: "qwen3.8-max",
@@ -215,7 +215,7 @@ test("usage store records totals, models, and days (isolated dir)", async () => 
     fs.writeFileSync(path.join(dir, "usage.json"), "{not json");
     assert.equal(readUsage().totals.requests, 0);
   } finally {
-    delete process.env.QODER_CN_INFER_STATE_DIR;
+    delete process.env.QODER4HERMES_STATE_DIR;
   }
 });
 
@@ -255,7 +255,7 @@ async function fakeUsageStream() {
 
 test("streamOpenAiSse forwards the upstream usage event as an OpenAI usage chunk", async () => {
   const dir = tmpDir();
-  process.env.QODER_CN_INFER_STATE_DIR = dir;
+  process.env.QODER4HERMES_STATE_DIR = dir;
   try {
     const events = [];
     for await (const ev of streamOpenAiSse({
@@ -285,14 +285,14 @@ test("streamOpenAiSse forwards the upstream usage event as an OpenAI usage chunk
     assert.equal(u.totals.total_tokens, 76);
     assert.ok(Math.abs(u.totals.credits - 0.00189981) < 1e-9);
   } finally {
-    delete process.env.QODER_CN_INFER_STATE_DIR;
+    delete process.env.QODER4HERMES_STATE_DIR;
   }
 });
 
 test("usage chunks can be disabled but the meter still records", async () => {
   const dir = tmpDir();
-  process.env.QODER_CN_INFER_STATE_DIR = dir;
-  process.env.QODER_CN_INFER_USAGE_CHUNKS = "0";
+  process.env.QODER4HERMES_STATE_DIR = dir;
+  process.env.QODER4HERMES_USAGE_CHUNKS = "0";
   try {
     const events = [];
     for await (const ev of streamOpenAiSse({
@@ -307,14 +307,14 @@ test("usage chunks can be disabled but the meter still records", async () => {
     await flushUsage();
     assert.equal(readUsage().totals.requests, 1);
   } finally {
-    delete process.env.QODER_CN_INFER_USAGE_CHUNKS;
-    delete process.env.QODER_CN_INFER_STATE_DIR;
+    delete process.env.QODER4HERMES_USAGE_CHUNKS;
+    delete process.env.QODER4HERMES_STATE_DIR;
   }
 });
 
 test("completeChat fills usage from the upstream event", async () => {
   const dir = tmpDir();
-  process.env.QODER_CN_INFER_STATE_DIR = dir;
+  process.env.QODER4HERMES_STATE_DIR = dir;
   try {
     async function fakeHttps() {
       return { status: 200, body: usageSseLines().join("\n") + "\n" };
@@ -329,13 +329,13 @@ test("completeChat fills usage from the upstream event", async () => {
     assert.equal(out.usage.total_tokens, 76);
     assert.equal(out.usage.prompt_tokens, 63);
   } finally {
-    delete process.env.QODER_CN_INFER_STATE_DIR;
+    delete process.env.QODER4HERMES_STATE_DIR;
   }
 });
 
 test("handleUsage returns account + local and honors local=1", async () => {
   const dir = tmpDir();
-  process.env.QODER_CN_INFER_STATE_DIR = dir;
+  process.env.QODER4HERMES_STATE_DIR = dir;
   try {
     await recordUsage({ model: "qwen3.8-max", total_tokens: 5, credits: 0.1, billable: true });
     await flushUsage();
@@ -360,7 +360,7 @@ test("handleUsage returns account + local and honors local=1", async () => {
     assert.equal(body2.source, "local");
     assert.equal(calls.length, 1, "local=1 must not hit the Qoder API");
   } finally {
-    delete process.env.QODER_CN_INFER_STATE_DIR;
+    delete process.env.QODER4HERMES_STATE_DIR;
   }
 });
 
@@ -397,12 +397,12 @@ test("wireHermesAt merges the provider without touching a profile's default mode
   const text = fs.readFileSync(configPath, "utf8");
   assert.match(text, /default: deepseek-v4\.1-flash/);
   assert.match(text, /provider: opencode-go/);
-  assert.match(text, /qoder-cn-infer:/);
+  assert.match(text, /qoder4hermes:/);
   assert.match(text, /base_url: http:\/\/127\.0\.0\.1:8787\/v1/);
   // Idempotent: wiring twice adds only one block.
   wireHermesAt({ host: "127.0.0.1", port: 8787 }, configPath);
   const text2 = fs.readFileSync(configPath, "utf8");
-  assert.equal(text2.split("qoder-cn-infer:").length - 1, 1);
+  assert.equal(text2.split("qoder4hermes:").length - 1, 1);
 });
 
 test("wireHermesAt refreshes an existing qoder base_url in place", () => {
@@ -410,7 +410,7 @@ test("wireHermesAt refreshes an existing qoder base_url in place", () => {
   const configPath = path.join(dir, "config.yaml");
   fs.writeFileSync(
     configPath,
-    "providers:\n  qoder-cn-infer:\n    base_url: http://127.0.0.1:8787/v1\n"
+    "providers:\n  qoder4hermes:\n    base_url: http://127.0.0.1:8787/v1\n"
   );
   wireHermesAt({ host: "127.0.0.1", port: 9999 }, configPath);
   const text = fs.readFileSync(configPath, "utf8");
@@ -426,14 +426,27 @@ test("wireHermesAt installs the /qoder + /claim quick commands idempotently", ()
   assert.equal(r1.quick_command, true);
   const text1 = fs.readFileSync(configPath, "utf8");
   assert.match(text1, /quick_commands:/);
-  assert.match(text1, /qoder-cn-infer usage --refresh/);
-  assert.match(text1, /qoder-cn-infer claim/);
+  assert.match(text1, /qoder4hermes usage --refresh/);
+  assert.match(text1, /qoder4hermes claim/);
   // Idempotent: wiring twice keeps exactly one of each quick command.
   const r2 = wireHermesAt({ host: "127.0.0.1", port: 8787 }, configPath);
   assert.equal(r2.quick_command, false);
   const text2 = fs.readFileSync(configPath, "utf8");
-  assert.equal(text2.split("qoder-cn-infer usage --refresh").length - 1, 1);
-  assert.equal(text2.split("qoder-cn-infer claim").length - 1, 1);
+  assert.equal(text2.split("qoder4hermes usage --refresh").length - 1, 1);
+  assert.equal(text2.split("qoder4hermes claim").length - 1, 1);
+});
+
+test("pre-rename quick commands are recognized and not duplicated", () => {
+  const dir = tmpDir();
+  const configPath = path.join(dir, "config.yaml");
+  fs.writeFileSync(
+    configPath,
+    "quick_commands:\n  qoder:\n    type: exec\n    command: \"$HOME/.local/bin/qoder-cn-infer usage --refresh\"\n  claim:\n    type: exec\n    command: \"$HOME/.local/bin/qoder-cn-infer claim\"\n"
+  );
+  const r = wireHermesAt({ host: "127.0.0.1", port: 8787 }, configPath);
+  const text = fs.readFileSync(configPath, "utf8");
+  assert.equal(r.quick_command, false);
+  assert.doesNotMatch(text, /qoder4hermes usage/);
 });
 
 test("wireHermesAt merges into an existing quick_commands map without dropping entries", () => {
@@ -465,7 +478,7 @@ test("detectHermesProfiles finds profiles and wireHermesProfiles wires them", ()
   fs.writeFileSync(path.join(freshDir, ".env"), "Y=1\n");
   fs.mkdirSync(path.join(base, "not-a-profile"), { recursive: true });
 
-  process.env.QODER_CN_INFER_HERMES_PROFILES_DIR = base;
+  process.env.QODER4HERMES_HERMES_PROFILES_DIR = base;
   try {
     const detected = detectHermesProfiles();
     assert.deepEqual(
@@ -480,7 +493,7 @@ test("detectHermesProfiles finds profiles and wireHermesProfiles wires them", ()
     assert.equal(byName.kgu.status, "wired");
     assert.equal(byName.fresh.status, "skipped_no_config");
     const kguText = fs.readFileSync(path.join(kguDir, "config.yaml"), "utf8");
-    assert.match(kguText, /qoder-cn-infer:/);
+    assert.match(kguText, /qoder4hermes:/);
     assert.match(kguText, /default: deepseek-v4\.1-flash/);
     assert.equal(fs.existsSync(path.join(freshDir, "config.yaml")), false);
 
@@ -488,6 +501,6 @@ test("detectHermesProfiles finds profiles and wireHermesProfiles wires them", ()
     const named = wireHermesProfiles({ host: "127.0.0.1", port: 8787 }, { names: ["nope"] });
     assert.equal(named.profiles[0].status, "not_found");
   } finally {
-    delete process.env.QODER_CN_INFER_HERMES_PROFILES_DIR;
+    delete process.env.QODER4HERMES_HERMES_PROFILES_DIR;
   }
 });

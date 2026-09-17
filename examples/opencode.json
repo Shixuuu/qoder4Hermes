@@ -1,10 +1,10 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "model": "qoder-cn-local/qwen3.8-max",
+  "model": "qoder4hermes/qwen3.8-max",
   "provider": {
-    "qoder-cn-local": {
+    "qoder4hermes": {
       "npm": "@ai-sdk/openai-compatible",
-      "name": "Qoder CN (inference facade)",
+      "name": "Qoder (local endpoint)",
       "options": {
         "baseURL": "http://127.0.0.1:8787/v1",
         "apiKey": "not-used"

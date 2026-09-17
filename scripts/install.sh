@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Human or agent one-liner:
-#   curl -fsSL https://raw.githubusercontent.com/<owner>/qoder-cn-infer/main/scripts/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/Shixuuu/qoder4Hermes/master/scripts/install.sh | bash
 # Agent / CI:
 #   curl -fsSL .../install.sh | bash -s -- --yes
 set -euo pipefail
@@ -13,11 +13,11 @@ for a in "$@"; do
     *) PASSTHROUGH+=("$a") ;;
   esac
 done
-if [[ "${QODER_CN_YES:-}" == "1" ]]; then YES=1; fi
+if [[ "${QODER4HERMES_YES:-${QODER_CN_YES:-}}" == "1" ]]; then YES=1; fi
 
 ROOT_HINT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." 2>/dev/null && pwd || true)"
-DEST="${QODER_CN_HOME:-$HOME/.local/share/qoder-cn-infer}"
-REPO="${QODER_CN_REPO:-https://github.com/Shixuuu/qoder-cn-infer.git}"
+DEST="${QODER4HERMES_HOME:-${QODER_CN_HOME:-$HOME/.local/share/qoder4hermes}}"
+REPO="${QODER4HERMES_REPO:-${QODER_CN_REPO:-https://github.com/Shixuuu/qoder4Hermes.git}}"
 NODE_MIN=18
 
 need_cmd() { command -v "$1" >/dev/null 2>&1; }
@@ -51,7 +51,7 @@ ensure_node() {
   need_cmd node
 }
 
-if [[ -f "$ROOT_HINT/qoder_cn_endpoint/server.mjs" ]]; then
+if [[ -f "$ROOT_HINT/qoder4hermes_endpoint/server.mjs" ]]; then
   SRC="$ROOT_HINT"
 else
   mkdir -p "$(dirname "$DEST")"
@@ -66,10 +66,10 @@ fi
 ensure_node
 export PATH="$HOME/.local/bin:$PATH"
 cd "$SRC"
-chmod +x bin/qoder-cn-infer.mjs scripts/install.sh 2>/dev/null || true
+chmod +x bin/qoder4hermes.mjs scripts/install.sh 2>/dev/null || true
 
 if [[ "$YES" -eq 1 ]]; then
-  exec node bin/qoder-cn-infer.mjs setup --yes ${PASSTHROUGH[@]+"${PASSTHROUGH[@]}"}
+  exec node bin/qoder4hermes.mjs setup --yes ${PASSTHROUGH[@]+"${PASSTHROUGH[@]}"}
 else
-  exec node bin/qoder-cn-infer.mjs setup ${PASSTHROUGH[@]+"${PASSTHROUGH[@]}"}
+  exec node bin/qoder4hermes.mjs setup ${PASSTHROUGH[@]+"${PASSTHROUGH[@]}"}
 fi

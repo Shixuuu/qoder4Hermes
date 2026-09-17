@@ -1,8 +1,9 @@
 /**
  * Local meter for what this facade has served: requests, tokens, credits.
  *
- * Lives beside the server PID in ~/.local/state/qoder-cn-infer/usage.json
- * (override the directory with QODER_CN_INFER_STATE_DIR — used by tests).
+ * Lives beside the server PID in ~/.local/state/qoder4hermes/usage.json
+ * (override the directory with QODER4HERMES_STATE_DIR — used by tests).
+ * Machines from before the rename keep their ~/.local/state/qoder-cn-infer meter.
  *
  * Numbers come from the CN gateway's own usage event on each completion
  * (prompt/completion/reasoning/cached tokens + credits + billable), so this
@@ -15,10 +16,13 @@ import path from "node:path";
 export const MAX_DAYS = 90;
 
 export function stateDir() {
-  return (
-    process.env.QODER_CN_INFER_STATE_DIR ||
-    path.join(os.homedir(), ".local", "state", "qoder-cn-infer")
-  );
+  const env = process.env.QODER4HERMES_STATE_DIR || process.env.QODER_CN_INFER_STATE_DIR;
+  if (env) return env;
+  const current = path.join(os.homedir(), ".local", "state", "qoder4hermes");
+  const legacy = path.join(os.homedir(), ".local", "state", "qoder-cn-infer");
+  if (fs.existsSync(current)) return current;
+  if (fs.existsSync(legacy)) return legacy;
+  return current;
 }
 
 export function usagePath() {

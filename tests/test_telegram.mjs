@@ -12,7 +12,7 @@ import {
   renderStatusText,
   tgCall,
   COMMANDS_HELP,
-} from "../qoder_cn_endpoint/telegram.mjs";
+} from "../qoder4hermes_endpoint/telegram.mjs";
 
 const USAGE_DATA = {
   account: {

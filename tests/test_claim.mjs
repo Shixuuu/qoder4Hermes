@@ -16,7 +16,7 @@ import {
   substituteTemplate,
   CAMPAIGNS_URL,
   QCS_RESOLVE_URL,
-} from "../qoder_cn_endpoint/claim.mjs";
+} from "../qoder4hermes_endpoint/claim.mjs";
 
 const SESS = {
   identity: { security_oauth_token: "jt-x", uid: "u1", user_type: "personal_standard" },

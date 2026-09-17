@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from qoder_cn_endpoint.validate import (  # noqa: E402
+from qoder4hermes_endpoint.validate import (  # noqa: E402
     INVENTED_OFFICIAL_CHAT,
     plain_markdown,
     check_hermes_provider,
@@ -34,7 +34,7 @@ class ValidateRepoTests(unittest.TestCase):
 
     def test_module_cli_exits_zero(self) -> None:
         proc = subprocess.run(
-            [sys.executable, "-m", "qoder_cn_endpoint", str(ROOT)],
+            [sys.executable, "-m", "qoder4hermes_endpoint", str(ROOT)],
             cwd=str(ROOT),
             capture_output=True,
             text=True,
@@ -79,16 +79,16 @@ class HermesExampleTests(unittest.TestCase):
         raw = (ROOT / "examples" / "hermes-config.yaml").read_text(encoding="utf-8")
         cfg = parse_simple_yaml(raw)
         providers = hermes_named_providers(cfg)
-        self.assertIn("qoder-cn-local", providers)
+        self.assertIn("qoder4hermes", providers)
         errors: list[str] = []
 
         class _R:
             def fail(self, message: str) -> None:
                 errors.append(message)
 
-        check_hermes_provider("qoder-cn-local", providers["qoder-cn-local"], _R())  # type: ignore[arg-type]
+        check_hermes_provider("qoder4hermes", providers["qoder4hermes"], _R())  # type: ignore[arg-type]
         self.assertEqual(errors, [])
-        entry = providers["qoder-cn-local"]
+        entry = providers["qoder4hermes"]
         self.assertTrue(str(entry["base_url"]).endswith("/v1"))
         self.assertIn("api_key", entry)
         self.assertIn("models", entry)
@@ -118,8 +118,8 @@ class OpenCodeExampleTests(unittest.TestCase):
 
         check_opencode_config(cfg, _R())  # type: ignore[arg-type]
         self.assertEqual(errors, [])
-        self.assertEqual(cfg["model"], "qoder-cn-local/qwen3.8-max")
-        provider = cfg["provider"]["qoder-cn-local"]
+        self.assertEqual(cfg["model"], "qoder4hermes/qwen3.8-max")
+        provider = cfg["provider"]["qoder4hermes"]
         self.assertEqual(provider["npm"], "@ai-sdk/openai-compatible")
         self.assertTrue(provider["options"]["baseURL"].endswith("/v1"))
         self.assertIn("apiKey", provider["options"])

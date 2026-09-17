@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 /**
- * qoder-cn-infer — local OpenAI API for Qoder CN quota.
- * Not the official CLI (`qoderclicn` / `qodercn`).
+ * qoder4hermes - local OpenAI-compatible API for Qoder, built for Hermes.
+ * Not the official CLI (`qoderclicn` / `qodercli`).
  *
- *   qoder-cn-infer setup      # humans: walkthrough
- *   qoder-cn-infer setup -y   # agents: non-interactive
+ * Experimental: the setup / wiring CLI is a work in progress; `setup -y`
+ * stays fully non-interactive for agents.
+ *
+ *   qoder4hermes setup      # humans: walkthrough
+ *   qoder4hermes setup -y   # agents: non-interactive
  */
 import { spawn, spawnSync, execFileSync } from "node:child_process";
 import crypto from "node:crypto";
@@ -25,12 +28,12 @@ import {
   readLine as wizardReadLine,
   ui,
 } from "./wizard.mjs";
-import { fetchAccountUsage, formatResetIn } from "../qoder_cn_endpoint/quota.mjs";
-import { resolveIdentity } from "../qoder_cn_endpoint/cn_auth.mjs";
-import { buildSession } from "../qoder_cn_endpoint/cn_cosy.mjs";
-import { usageSummary, usagePath, formatCompact } from "../qoder_cn_endpoint/usage_store.mjs";
-import { createBot } from "../qoder_cn_endpoint/telegram.mjs";
-import { claimStatus, runClaim } from "../qoder_cn_endpoint/claim.mjs";
+import { fetchAccountUsage, formatResetIn } from "../qoder4hermes_endpoint/quota.mjs";
+import { resolveIdentity } from "../qoder4hermes_endpoint/cn_auth.mjs";
+import { buildSession } from "../qoder4hermes_endpoint/cn_cosy.mjs";
+import { usageSummary, usagePath, formatCompact, stateDir } from "../qoder4hermes_endpoint/usage_store.mjs";
+import { createBot } from "../qoder4hermes_endpoint/telegram.mjs";
+import { claimStatus, runClaim } from "../qoder4hermes_endpoint/claim.mjs";
 import {
   REGION_DEFS,
   cliLoginPaths,
@@ -40,24 +43,32 @@ import {
   parseRegion,
   resolveRegion,
   storedPatPath,
-} from "../qoder_cn_endpoint/regions.mjs";
+} from "../qoder4hermes_endpoint/regions.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "..");
-const VERSION = "1.6.0";
+const VERSION = "2.0.0";
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 8787;
 const CONFIG_DIR = configDir();
 const CONFIG_PATH = path.join(CONFIG_DIR, "config.json");
-const STATE_DIR = path.join(os.homedir(), ".local", "state", "qoder-cn-infer");
+const STATE_DIR = stateDir();
 const PID_PATH = path.join(STATE_DIR, "server.pid");
 const LOG_PATH = path.join(STATE_DIR, "server.log");
-const BIN_LINK = path.join(os.homedir(), ".local", "bin", "qoder-cn-infer");
-const OLD_BIN_LINK = path.join(os.homedir(), ".local", "bin", "qoder-cn");
-const UNIT_NAME = "qoder-cn-infer.service";
+const BIN_LINK = path.join(os.homedir(), ".local", "bin", "qoder4hermes");
+// Shims from earlier names: kept working where they already exist, never created anew.
+const LEGACY_BIN_LINKS = [
+  path.join(os.homedir(), ".local", "bin", "qoder-cn-infer"),
+  path.join(os.homedir(), ".local", "bin", "qoder-cn"),
+];
+const UNIT_NAME = "qoder4hermes.service";
 const UNIT_PATH = path.join(os.homedir(), ".config", "systemd", "user", UNIT_NAME);
-const TG_UNIT_NAME = "qoder-cn-infer-telegram.service";
+// A machine still running the unit under its pre-rename file name keeps that
+// file (updated in place) instead of gaining a second unit that fights for the port.
+const LEGACY_UNIT_PATH = path.join(os.homedir(), ".config", "systemd", "user", "qoder-cn-infer.service");
+const TG_UNIT_NAME = "qoder4hermes-telegram.service";
 const TG_UNIT_PATH = path.join(os.homedir(), ".config", "systemd", "user", TG_UNIT_NAME);
+const LEGACY_TG_UNIT_PATH = path.join(os.homedir(), ".config", "systemd", "user", "qoder-cn-infer-telegram.service");
 const TG_PID_PATH = path.join(STATE_DIR, "telegram.pid");
 const TG_LOG_PATH = path.join(STATE_DIR, "telegram.log");
 const TG_CONFIG_PATH = path.join(CONFIG_DIR, "telegram.json");
@@ -83,7 +94,7 @@ function rule(width = 48) {
 
 function banner(subtitle) {
   console.log("");
-  console.log(`  ${c.bold(c.mag("qoder-cn-infer"))}  ${c.dim(VERSION)}`);
+  console.log(`  ${c.bold(c.mag("qoder4hermes"))}  ${c.dim(VERSION)}`);
   console.log(`  ${rule()}`);
   if (subtitle) console.log(`  ${c.dim(subtitle)}`);
   console.log("");
@@ -151,7 +162,7 @@ function parseArgs(argv) {
     else if (a.startsWith("--region=")) args.region = a.slice(9);
     else if (!a.startsWith("-")) args._.push(a);
   }
-  if (process.env.QODER_CN_YES === "1") args.yes = true;
+  if (process.env.QODER4HERMES_YES === "1" || process.env.QODER_CN_YES === "1") args.yes = true;
   if (args.token) args.pat = true;
   return args;
 }
@@ -184,16 +195,17 @@ function endpoint(cfg = loadConfig()) {
 
 function printHelp() {
   const cmd = (name, desc) => `  ${c.mag(name.padEnd(12))} ${c.dim(desc)}`;
-  banner("Local OpenAI API for your Qoder CN quota");
-  console.log(`  ${c.dim("Not the official CLI")} ${c.fg("qoderclicn")} ${c.dim("/")} ${c.fg("qodercn")}`);
+  banner("Qoder quota behind a local OpenAI API, built for Hermes");
+  console.log(`  ${c.dim("Not the official CLI")} ${c.fg("qoderclicn")} ${c.dim("/")} ${c.fg("qodercli")}`);
+  console.log(`  ${c.dim("Experimental: the setup/wiring CLI is a work in progress.")}`);
   console.log("");
   console.log(`  ${c.bold("Usage")}`);
-  console.log(`    ${c.fg("qoder-cn-infer")} ${c.dim("[options]")} ${c.mag("<command>")}`);
+  console.log(`    ${c.fg("qoder4hermes")} ${c.dim("[options]")} ${c.mag("<command>")}`);
   console.log("");
   console.log(`  ${c.bold("Commands")}`);
-  console.log(cmd("setup", "Interactive onboarding wizard"));
+  console.log(cmd("setup", "Onboarding wizard (experimental)"));
   console.log(cmd("doctor", "Check Node, login, port, health"));
-  console.log(cmd("login", "Sign in — browser or PAT"));
+  console.log(cmd("login", "Sign in with a Qoder token (or browser)"));
   console.log(cmd("logout", "Forget a stored PAT (CLI login kept)"));
   console.log(cmd("start", "Start the local API"));
   console.log(cmd("stop", "Stop the local API"));
@@ -201,13 +213,13 @@ function printHelp() {
   console.log(cmd("models", "List models"));
   console.log(cmd("usage", "Credits, tokens, and reset window"));
   console.log(cmd("claim", "Redeem Qoder promo credits (/claim)"));
-  console.log(cmd("wire", "Write Hermes / OpenCode config"));
+  console.log(cmd("wire", "Write Hermes config (OpenCode best-effort)"));
   console.log(cmd("telegram", "Usage bot for Telegram (/usage)"));
   console.log(cmd("uninstall", "Remove service and PATH shim"));
   console.log("");
   console.log(`  ${c.bold("Login")}`);
+  console.log(`    ${c.mag("--pat")}                  ${c.dim("token from your Qoder profile (recommended)")}`);
   console.log(`    ${c.mag("--browser")}              ${c.dim("official CLI login in the browser")}`);
-  console.log(`    ${c.mag("--pat")}                  ${c.dim("paste / store a personal access token")}`);
   console.log(`    ${c.mag("--token")} ${c.dim("<pt-…>")}         ${c.dim("non-interactive PAT")}`);
   console.log(`    ${c.mag("--region")} ${c.dim("<cn|global>")}    ${c.dim("Qoder CN (default) or Qoder International")}`);
   console.log("");
@@ -229,12 +241,12 @@ function printHelp() {
   console.log(`    ${c.mag("--uninstall")}            ${c.dim("telegram: remove the service")}`);
   console.log("");
   console.log(`  ${c.bold("Walkthrough")}`);
-  console.log(`    1  ${c.fg("qoder-cn-infer setup")}`);
-  console.log(`    2  ${c.dim("Choose browser or PAT when asked")}`);
+  console.log(`    1  ${c.fg("qoder4hermes setup")}`);
+  console.log(`    2  ${c.dim("Paste the token from your Qoder profile (or pick browser)")}`);
   console.log(`    3  ${c.dim("Point Hermes at")} ${c.cyan("http://127.0.0.1:8787/v1")}`);
   console.log("");
   console.log(`  ${c.bold("International (Qoder)")}`);
-  console.log(`    ${c.fg(`qoder-cn-infer login --region global --pat --token pt-…`)}`);
+  console.log(`    ${c.fg(`qoder4hermes login --region global --pat --token pt-…`)}`);
   console.log(`    ${c.dim("Token from")} ${c.cyan("https://qoder.com/account/integrations")} ${c.dim("· separate account from Qoder CN")}`);
   console.log("");
 }
@@ -351,40 +363,68 @@ function ensureDirs() {
   fs.mkdirSync(path.join(os.homedir(), ".config", "systemd", "user"), { recursive: true });
 }
 
+function replaceSymlink(link, target) {
+  try {
+    fs.rmSync(link, { force: true });
+  } catch {
+    /* ignore */
+  }
+  try {
+    fs.symlinkSync(target, link);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function linkCli() {
   ensureDirs();
-  const src = path.join(ROOT, "bin", "qoder-cn-infer.mjs");
+  const src = path.join(ROOT, "bin", "qoder4hermes.mjs");
   try {
     fs.chmodSync(src, 0o755);
   } catch {
     /* ignore */
   }
-  try {
-    if (fs.existsSync(BIN_LINK) || fs.lstatSync(BIN_LINK).isSymbolicLink()) fs.unlinkSync(BIN_LINK);
-  } catch {
-    /* ignore */
+  const ok = replaceSymlink(BIN_LINK, src);
+  // Keep shims from earlier names working, but only where they already exist:
+  // a fresh install gets exactly one binary on PATH.
+  for (const legacy of LEGACY_BIN_LINKS) {
+    try {
+      if (fs.lstatSync(legacy).isSymbolicLink()) replaceSymlink(legacy, src);
+    } catch {
+      /* not present: leave it that way */
+    }
   }
-  try {
-    fs.symlinkSync(src, BIN_LINK);
-    return BIN_LINK;
-  } catch (e) {
-    return `failed: ${e.message}`;
-  }
+  return ok ? BIN_LINK : "failed: could not create symlink";
+}
+
+/** The unit file this machine actually has: pre-rename one when present, else the new name. */
+function activeUnitPath() {
+  if (fs.existsSync(UNIT_PATH)) return UNIT_PATH;
+  if (fs.existsSync(LEGACY_UNIT_PATH)) return LEGACY_UNIT_PATH;
+  return UNIT_PATH;
+}
+
+/** Same idea for the Telegram bot unit. */
+function activeTgUnitPath() {
+  if (fs.existsSync(TG_UNIT_PATH)) return TG_UNIT_PATH;
+  if (fs.existsSync(LEGACY_TG_UNIT_PATH)) return LEGACY_TG_UNIT_PATH;
+  return TG_UNIT_PATH;
 }
 
 function writeUnit(cfg) {
   const node = process.execPath;
-  const server = path.join(ROOT, "qoder_cn_endpoint", "server.mjs");
+  const server = path.join(ROOT, "qoder4hermes_endpoint", "server.mjs");
   const unit = `[Unit]
-Description=Qoder CN OpenAI-compatible inference facade
+Description=qoder4Hermes OpenAI-compatible inference facade
 After=network-online.target
 
 [Service]
 Type=simple
 WorkingDirectory=${ROOT}
-Environment=QODER_CN_INFER_HOST=${cfg.host || DEFAULT_HOST}
-Environment=QODER_CN_INFER_PORT=${cfg.port || DEFAULT_PORT}
-Environment=QODER_CN_INFER_REGION=${normalizeRegion(cfg.region || "cn")}
+Environment=QODER4HERMES_HOST=${cfg.host || DEFAULT_HOST}
+Environment=QODER4HERMES_PORT=${cfg.port || DEFAULT_PORT}
+Environment=QODER4HERMES_REGION=${normalizeRegion(cfg.region || "cn")}
 Environment=PATH=${path.dirname(node)}:/usr/bin:/bin
 ExecStart=${node} ${server}
 Restart=always
@@ -395,7 +435,7 @@ TimeoutStopSec=10
 WantedBy=default.target
 `;
   fs.mkdirSync(path.dirname(UNIT_PATH), { recursive: true });
-  fs.writeFileSync(UNIT_PATH, unit);
+  fs.writeFileSync(activeUnitPath(), unit);
 }
 
 function haveSystemdUser() {
@@ -404,22 +444,22 @@ function haveSystemdUser() {
   return r.status === 0;
 }
 
-function startSystemd(unit = UNIT_NAME) {
+function startSystemd(unit = path.basename(activeUnitPath())) {
   spawnSync("systemctl", ["--user", "daemon-reload"], { encoding: "utf8" });
   const en = spawnSync("systemctl", ["--user", "enable", "--now", unit], { encoding: "utf8" });
   spawnSync("loginctl", ["enable-linger", os.userInfo().username], { encoding: "utf8" });
   return en.status === 0;
 }
 
-function stopSystemd(unit = UNIT_NAME) {
+function stopSystemd(unit = path.basename(activeUnitPath())) {
   spawnSync("systemctl", ["--user", "disable", "--now", unit], { encoding: "utf8" });
 }
 
 function writeTelegramUnit() {
   const node = process.execPath;
-  const cli = path.join(ROOT, "bin", "qoder-cn-infer.mjs");
+  const cli = path.join(ROOT, "bin", "qoder4hermes.mjs");
   const unit = `[Unit]
-Description=Qoder CN usage Telegram bot
+Description=qoder4Hermes Telegram usage bot
 After=network-online.target
 
 [Service]
@@ -435,13 +475,13 @@ TimeoutStopSec=10
 WantedBy=default.target
 `;
   fs.mkdirSync(path.dirname(TG_UNIT_PATH), { recursive: true });
-  fs.writeFileSync(TG_UNIT_PATH, unit);
+  fs.writeFileSync(activeTgUnitPath(), unit);
 }
 
 function startTelegramNohup() {
   ensureDirs();
   const node = process.execPath;
-  const cli = path.join(ROOT, "bin", "qoder-cn-infer.mjs");
+  const cli = path.join(ROOT, "bin", "qoder4hermes.mjs");
   const out = fs.openSync(TG_LOG_PATH, "a");
   const child = spawn(node, [cli, "telegram"], {
     cwd: ROOT,
@@ -466,7 +506,7 @@ function stopTelegramNohup() {
 function startNohup(cfg) {
   ensureDirs();
   const node = process.execPath;
-  const server = path.join(ROOT, "qoder_cn_endpoint", "server.mjs");
+  const server = path.join(ROOT, "qoder4hermes_endpoint", "server.mjs");
   const out = fs.openSync(LOG_PATH, "a");
   const child = spawn(node, [server], {
     cwd: ROOT,
@@ -474,9 +514,9 @@ function startNohup(cfg) {
     stdio: ["ignore", out, out],
     env: {
       ...process.env,
-      QODER_CN_INFER_HOST: String(cfg.host || DEFAULT_HOST),
-      QODER_CN_INFER_PORT: String(cfg.port || DEFAULT_PORT),
-      QODER_CN_INFER_REGION: normalizeRegion(cfg.region || "cn"),
+      QODER4HERMES_HOST: String(cfg.host || DEFAULT_HOST),
+      QODER4HERMES_PORT: String(cfg.port || DEFAULT_PORT),
+      QODER4HERMES_REGION: normalizeRegion(cfg.region || "cn"),
     },
   });
   child.unref();
@@ -521,7 +561,7 @@ function waitEnter(yes, prompt) {
 
 function hermesProfilesDir() {
   return (
-    process.env.QODER_CN_INFER_HERMES_PROFILES_DIR ||
+    process.env.QODER4HERMES_HERMES_PROFILES_DIR ||
     path.join(os.homedir(), ".hermes", "profiles")
   );
 }
@@ -529,7 +569,7 @@ function hermesProfilesDir() {
 function hermesProviderBlock(cfg) {
   const label = endpointsFor(cfg.region || "cn").label;
   return `
-  qoder-cn-infer:
+  qoder4hermes:
     name: ${label}
     base_url: ${endpoint(cfg)}
     api_key: not-used
@@ -543,8 +583,16 @@ function hermesProviderBlock(cfg) {
  * (no LLM turn, 30s cap) so `/qoder` and `/claim` reply instantly.
  */
 const QUICK_COMMANDS = [
-  { name: "qoder", exec: "$HOME/.local/bin/qoder-cn-infer usage --refresh" },
-  { name: "claim", exec: "$HOME/.local/bin/qoder-cn-infer claim" },
+  {
+    name: "qoder",
+    exec: "$HOME/.local/bin/qoder4hermes usage --refresh",
+    legacy: ["$HOME/.local/bin/qoder-cn-infer usage", "$HOME/.local/bin/qoder-cn usage"],
+  },
+  {
+    name: "claim",
+    exec: "$HOME/.local/bin/qoder4hermes claim",
+    legacy: ["$HOME/.local/bin/qoder-cn-infer claim", "$HOME/.local/bin/qoder-cn claim"],
+  },
 ];
 
 function quickCommandEntries(pad, entries) {
@@ -555,7 +603,9 @@ function quickCommandEntries(pad, entries) {
 
 /** Merge the /qoder + /claim quick commands into config text; {text, added}. */
 function ensureQuickCommand(text) {
-  const missing = QUICK_COMMANDS.filter((qc) => !text.includes(qc.exec));
+  const missing = QUICK_COMMANDS.filter(
+    (qc) => ![qc.exec, ...(qc.legacy || [])].some((needle) => text.includes(needle))
+  );
   if (!missing.length) return { text, added: false };
   let m = text.match(/^([ \t]*)quick_commands:[ \t]*\{[ \t]*\}[ \t]*$/m);
   if (m) {
@@ -581,7 +631,7 @@ function ensureQuickCommand(text) {
 }
 
 /**
- * Merge the qoder-cn-infer provider block (and the /qoder quick command) into
+ * Merge the qoder4hermes provider block (and the /qoder quick command) into
  * a Hermes config file. Never touches model.default in existing files; only
  * creates it for a fresh main config. Base URLs of an existing qoder block are
  * refreshed in place.
@@ -591,8 +641,8 @@ function wireHermesAt(cfg, configPath, { setDefaultOnCreate = false } = {}) {
   if (!fs.existsSync(configPath)) {
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
     const head = setDefaultOnCreate
-      ? `model:\n  default: qwen3.8-max\n  provider: qoder-cn-infer\n`
-      : `# Hermes profile config — qoder-cn-infer provider (default model untouched)\n`;
+      ? `model:\n  default: qwen3.8-max\n  provider: custom:qoder4hermes\n`
+      : `# Hermes profile config — qoder4hermes provider (default model untouched)\n`;
     fs.writeFileSync(
       configPath,
       `${head}providers:\n${block}\nquick_commands:\n${quickCommandEntries("", QUICK_COMMANDS)}\n`
@@ -603,6 +653,7 @@ function wireHermesAt(cfg, configPath, { setDefaultOnCreate = false } = {}) {
   const ensured = ensureQuickCommand(text);
   text = ensured.text;
   if (
+    /^\s+qoder4hermes:/m.test(text) ||
     /^\s+qoder-cn-infer:/m.test(text) ||
     /^\s+qoder-cn:/m.test(text) ||
     /base_url:\s*http:\/\/127\.0\.0\.1:8787/m.test(text)
@@ -674,6 +725,7 @@ function profileIsWired(configPath) {
   try {
     const text = fs.readFileSync(configPath, "utf8");
     return (
+      /^\s+qoder4hermes:/m.test(text) ||
       /^\s+qoder-cn-infer:/m.test(text) ||
       /base_url:\s*http:\/\/127\.0\.0\.1:8787/m.test(text)
     );
@@ -742,7 +794,7 @@ function wireOpenCode(cfg) {
   }
   obj.$schema = obj.$schema || "https://opencode.ai/config.json";
   obj.provider = obj.provider || {};
-  obj.provider["qoder-cn-infer"] = {
+  obj.provider["qoder4hermes"] = {
     npm: "@ai-sdk/openai-compatible",
     name: endpointsFor(cfg.region || "cn").label,
     options: { baseURL: endpoint(cfg), apiKey: "not-used" },
@@ -753,7 +805,7 @@ function wireOpenCode(cfg) {
       auto: { name: "Auto (routing · 0.5x credits)" },
     },
   };
-  obj.model = obj.model || "qoder-cn-infer/qwen3.8-max";
+  obj.model = obj.model || "qoder4hermes/qwen3.8-max";
   fs.mkdirSync(path.dirname(p), { recursive: true });
   fs.writeFileSync(p, JSON.stringify(obj, null, 2) + "\n");
   return { ok: true, path: p };
@@ -791,7 +843,7 @@ async function cmdDoctor(args) {
     checks.push({
       id: `profile:${p.name}`,
       ok: true,
-      detail: wired ? "wired" : "not wired (qoder-cn-infer wire --profiles)",
+      detail: wired ? "wired" : "not wired (qoder4hermes wire --profiles)",
     });
   }
   if (args.json) {
@@ -824,9 +876,9 @@ async function cmdStatus(args) {
   console.log(
     login
       ? c.ok("login    signed in")
-      : c.skip(`login    missing (qoder-cn-infer login${region === "cn" ? "" : ` --region ${region}`})`)
+      : c.skip(`login    missing (qoder4hermes login${region === "cn" ? "" : ` --region ${region}`})`)
   );
-  console.log(c.dim("usage    qoder-cn-infer usage  (credits · tokens)"));
+  console.log(c.dim("usage    qoder4hermes usage  (credits · tokens)"));
   return running ? 0 : 1;
 }
 
@@ -844,7 +896,7 @@ async function cmdStart(args) {
     if (args.json) jsonOut({ ok: false, error: "not_logged_in", region });
     else
       console.log(
-        "  " + c.bad(`not signed in. run  qoder-cn-infer login${region === "cn" ? "" : ` --region ${region}`}`)
+        "  " + c.bad(`not signed in. run  qoder4hermes login${region === "cn" ? "" : ` --region ${region}`}`)
       );
     return 2;
   }
@@ -858,7 +910,7 @@ async function cmdStart(args) {
   }
   const ok = await isHealthy(cfg);
   if (args.json) jsonOut({ ok, how, endpoint: endpoint(cfg), region });
-  else console.log(ok ? c.ok(`started (${how})  ${endpoint(cfg)}`) : c.bad("failed to start — qoder-cn-infer doctor"));
+  else console.log(ok ? c.ok(`started (${how})  ${endpoint(cfg)}`) : c.bad("failed to start — qoder4hermes doctor"));
   return ok ? 0 : 1;
 }
 
@@ -887,12 +939,12 @@ async function chooseLoginMethod(args) {
   const idx = await radioChoice(
     "How do you want to sign in?",
     [
-      { label: "Browser", hint: `${def.cliName} login · recommended` },
-      { label: "PAT", hint: `token from ${def.patHintUrl}` },
+      { label: "Qoder token", hint: `from your Qoder profile · ${def.patHintUrl} · recommended` },
+      { label: "Browser", hint: `${def.cliName} login · official CLI` },
     ],
     0
   );
-  return idx === 1 ? "pat" : "browser";
+  return idx === 0 ? "pat" : "browser";
 }
 
 function loginBrowser(args) {
@@ -906,7 +958,7 @@ function loginBrowser(args) {
       console.log(
         "  " +
           c.bad(
-            `${def.cliName} not installed — run  qoder-cn-infer setup  or use  --pat --region ${region}`
+            `${def.cliName} not installed — run  qoder4hermes setup  or use  --pat --region ${region}`
           )
       );
     return 1;
@@ -924,7 +976,7 @@ function loginBrowser(args) {
       "  " +
         (ok
           ? c.ok(`signed in with browser (${def.label})`)
-          : c.skip("not detected yet — finish the page, then  qoder-cn-infer doctor"))
+          : c.skip("not detected yet — finish the page, then  qoder4hermes doctor"))
     );
   return ok ? 0 : 2;
 }
@@ -934,7 +986,7 @@ async function loginPat(args) {
   const def = REGION_DEFS[region];
   let token = (args.token || storedPat(region)).trim();
   if (!token && !args.yes) {
-    printInfo(`Create a token at  ${def.patHintUrl}`, null);
+    printInfo(`Create a token from your Qoder profile:  ${def.patHintUrl}`, null);
     token = await wizardReadLine({
       hidden: true,
       prompt: ui.yellow("  Paste PAT: "),
@@ -959,14 +1011,14 @@ async function loginPat(args) {
   else {
     console.log("  " + c.ok(`PAT stored in  ${storedPatPath(region)}  (mode 600)`));
     console.log("  " + c.dim(`region    ${region} (${def.label})`));
-    console.log("  " + c.dim("the API uses it on its next start:  qoder-cn-infer start"));
+    console.log("  " + c.dim("the API uses it on its next start:  qoder4hermes start"));
   }
   return 0;
 }
 
 async function cmdLogin(args) {
   if (!args.json && !args.fromSetup) {
-    printBanner("Sign in", "Official CLI browser login or a personal access token.");
+    printBanner("Sign in", "A token from your Qoder profile, or the official CLI browser login.");
   }
   const method = await chooseLoginMethod(args);
   if (method === "pat") return loginPat(args);
@@ -1012,7 +1064,7 @@ async function cmdModels(args) {
   const r = await httpGet(`${endpoint(cfg)}/models`, 20000);
   if (r.status !== 200) {
     if (args.json) jsonOut({ ok: false, error: r.error || r.body });
-    else console.log(c.bad("API not running. qoder-cn-infer start"));
+    else console.log(c.bad("API not running. qoder4hermes start"));
     return 1;
   }
   const data = JSON.parse(r.body);
@@ -1122,7 +1174,7 @@ async function collectUsage(args = {}) {
         accountError = String(e?.message || e);
       }
     } else {
-      accountError = `not signed in for ${label} — qoder-cn-infer login${region === "cn" ? "" : ` --region ${region}`}`;
+      accountError = `not signed in for ${label} — qoder4hermes login${region === "cn" ? "" : ` --region ${region}`}`;
     }
   }
   return { account, accountError, local, source, healthy, endpoint: endpoint(cfg), cfg, region, label };
@@ -1154,7 +1206,7 @@ function formatUsagePlain({ account, accountError, local, source, endpoint: ep, 
   } else if (accountError) {
     lines.push(`Account: ${accountError}`);
   } else {
-    lines.push("Account: not signed in — qoder-cn-infer login");
+    lines.push("Account: not signed in — qoder4hermes login");
   }
   const t = local?.totals;
   if (t) {
@@ -1241,7 +1293,7 @@ async function cmdUsage(args) {
   } else if (accountError) {
     console.log("  " + c.bad(accountError));
   } else {
-    console.log("  " + c.skip("not signed in — qoder-cn-infer login"));
+    console.log("  " + c.skip("not signed in — qoder4hermes login"));
   }
 
   printHeader("Local meter");
@@ -1293,7 +1345,7 @@ async function cmdClaim(args) {
     else
       console.log(
         "  " +
-          c.bad(`not signed in — qoder-cn-infer login${region === "cn" ? "" : ` --region ${region}`}`)
+          c.bad(`not signed in — qoder4hermes login${region === "cn" ? "" : ` --region ${region}`}`)
       );
     return 2;
   }
@@ -1354,7 +1406,7 @@ async function cmdClaim(args) {
       }
     }
     console.log("");
-    console.log(c.dim("usage      qoder-cn-infer usage --refresh   (see the credits move)"));
+    console.log(c.dim("usage      qoder4hermes usage --refresh   (see the credits move)"));
     console.log("");
     return 0;
   } catch (e) {
@@ -1398,7 +1450,7 @@ async function collectStatus() {
 
 /**
  * Telegram usage bot: /usage, /status, /help in any chat.
- *   --tg-token <t>   BotFather token (stored in ~/.config/qoder-cn-infer/telegram.json, mode 600)
+ *   --tg-token <t>   BotFather token (stored in ~/.config/qoder4hermes/telegram.json, mode 600)
  *   --chat <id>      pre-bind a chat id
  *   --install        run under systemd (or nohup) and exit
  *   --report         send one usage push to the bound chat and exit (cron-friendly)
@@ -1410,15 +1462,17 @@ async function cmdTelegram(args) {
     tgc.token = args.tgToken.trim();
     saveTelegramConfig(tgc);
   }
-  const token = (args.tgToken || "").trim() || process.env.QODER_CN_INFER_TG_TOKEN || tgc.token || "";
+  const token = (args.tgToken || "").trim() || process.env.QODER4HERMES_TG_TOKEN || process.env.QODER_CN_INFER_TG_TOKEN || tgc.token || "";
 
   if (args.uninstall) {
-    stopSystemd(TG_UNIT_NAME);
+    stopSystemd(path.basename(activeTgUnitPath()));
     stopTelegramNohup();
-    try {
-      fs.unlinkSync(TG_UNIT_PATH);
-    } catch {
-      /* ignore */
+    for (const unit of [TG_UNIT_PATH, LEGACY_TG_UNIT_PATH]) {
+      try {
+        fs.unlinkSync(unit);
+      } catch {
+        /* ignore */
+      }
     }
     if (args.json) jsonOut({ ok: true, removed: true });
     else console.log(c.ok("telegram bot service removed (telegram.json kept)"));
@@ -1429,14 +1483,14 @@ async function cmdTelegram(args) {
       jsonOut({
         ok: false,
         error: "token_missing",
-        hint: "qoder-cn-infer telegram --tg-token <BOTFATHER_TOKEN>",
+        hint: "qoder4hermes telegram --tg-token <BOTFATHER_TOKEN>",
       });
     } else {
       printBanner("Telegram usage bot");
       console.log("  " + c.bad("no bot token yet. Create one with @BotFather:"));
       printInfo(
         "1. Telegram → @BotFather → /newbot → copy the token",
-        "2. qoder-cn-infer telegram --tg-token <token> --install"
+        "2. qoder4hermes telegram --tg-token <token> --install"
       );
     }
     return 2;
@@ -1470,7 +1524,7 @@ async function cmdTelegram(args) {
     }
     writeTelegramUnit();
     let how = "nohup";
-    if (haveSystemdUser() && startSystemd(TG_UNIT_NAME)) how = "systemd";
+    if (haveSystemdUser() && startSystemd(path.basename(activeTgUnitPath()))) how = "systemd";
     else startTelegramNohup();
     if (args.json) jsonOut({ ok: true, installed: { how }, state });
     else {
@@ -1478,7 +1532,7 @@ async function cmdTelegram(args) {
       console.log(c.ok(`installed (${how}) — restarts itself`));
       printInfo(
         "Message your bot once to bind it, then send  /usage",
-        "One-shot push:  qoder-cn-infer telegram --report"
+        "One-shot push:  qoder4hermes telegram --report"
       );
     }
     return 0;
@@ -1560,8 +1614,9 @@ async function cmdSetup(args) {
   const interactive = !args.yes && !args.json && process.stdin.isTTY;
   if (!args.json) {
     printBanner(
-      "qoder-cn-infer Setup Wizard",
-      `Let's turn your ${setupLabel} quota into a local API.`,
+      "qoder4Hermes Setup Wizard (experimental)",
+      `Let's turn your ${setupLabel} quota into a local API for Hermes.`,
+      "The CLI setup is a work in progress; the manual route (start the API, point Hermes at it) always works.",
       "Press Ctrl+C at any time to exit."
     );
   }
@@ -1604,14 +1659,14 @@ async function cmdSetup(args) {
           ok: false,
           error: "not_logged_in",
           region: setupRegion,
-          hint: `qoder-cn-infer login${rflag} --browser  or  qoder-cn-infer login${rflag} --pat --token pt-…  (or set ${patEnvName})`,
+          hint: `qoder4hermes login${rflag} --pat --token pt-…  (token from your Qoder profile: ${setupDef.patHintUrl})  or  qoder4hermes login${rflag} --browser  (or set ${patEnvName})`,
           report,
         });
       } else {
         printWarn(`Sign in is required (${setupLabel}).`);
-        printInfo(`Browser   qoder-cn-infer login${rflag} --browser`);
-        printInfo(`PAT       qoder-cn-infer login${rflag} --pat --token pt-…   ${setupDef.patHintUrl}`);
-        printInfo(`Or set    ${patEnvName}=pt-…   then  qoder-cn-infer setup --yes`);
+        printInfo(`Token     qoder4hermes login${rflag} --pat --token pt-…   (from your Qoder profile: ${setupDef.patHintUrl})`);
+        printInfo(`Browser   qoder4hermes login${rflag} --browser   (official ${setupDef.cliName} login)`);
+        printInfo(`Or set    ${patEnvName}=pt-…   then  qoder4hermes setup --yes`);
       }
       return 2;
     }
@@ -1649,14 +1704,14 @@ async function cmdSetup(args) {
   let wireO = opencodeHere;
   if (interactive) {
     wireH = await promptYesNo("  Wire Hermes Agent (~/.hermes/config.yaml)?", hermesHere);
-    wireO = await promptYesNo("  Wire OpenCode (~/.config/opencode/opencode.json)?", opencodeHere);
+    wireO = await promptYesNo("  Also wire OpenCode? (untested, best-effort)", opencodeHere);
   }
   const h = wireH ? wireHermes(cfg) : { path: "(skipped)" };
   const o = wireO ? wireOpenCode(cfg) : { path: "(skipped)" };
   if (wireH) printOk(`Hermes    ${h.path}`);
-  else printInfo(hermesHere ? "Hermes skipped" : "Hermes not detected — skipped (qoder-cn-infer wire to force)");
+  else printInfo(hermesHere ? "Hermes skipped" : "Hermes not detected — skipped (qoder4hermes wire to force)");
   if (wireO) printOk(`OpenCode  ${o.path}`);
-  else printInfo(opencodeHere ? "OpenCode skipped" : "OpenCode not detected — skipped (qoder-cn-infer wire to force)");
+  else printInfo(opencodeHere ? "OpenCode skipped" : "OpenCode not detected — skipped (qoder4hermes wire to force)");
   const clientBits = [wireH ? "Hermes" : "", wireO ? "OpenCode" : ""].filter(Boolean);
   step("clients", true, clientBits.length ? `wired ${clientBits.join(" + ")}` : "none detected — endpoint only");
 
@@ -1726,7 +1781,7 @@ async function cmdSetup(args) {
     console.log(`  ${c.dim("Model")}      ${c.fg("qwen3.8-max")}  ${c.dim("· qwen3.8-flash · efficient")}`);
     console.log(`  ${c.dim("Region")}     ${c.fg(`${setupRegion} (${setupLabel})`)}`);
     console.log("");
-    console.log(`  ${c.dim("Hermes")}     hermes model  →  qoder-cn-infer / qwen3.8-max`);
+    console.log(`  ${c.dim("Hermes")}     hermes model  →  qoder4hermes / qwen3.8-max`);
     console.log("");
   }
   return 0;
@@ -1735,20 +1790,19 @@ async function cmdSetup(args) {
 function cmdUninstall(args) {
   stopSystemd();
   stopNohup();
-  try {
-    fs.unlinkSync(UNIT_PATH);
-  } catch {
-    /* ignore */
+  for (const unit of [UNIT_PATH, LEGACY_UNIT_PATH]) {
+    try {
+      fs.unlinkSync(unit);
+    } catch {
+      /* ignore */
+    }
   }
-  try {
-    fs.unlinkSync(BIN_LINK);
-  } catch {
-    /* ignore */
-  }
-  try {
-    fs.unlinkSync(OLD_BIN_LINK);
-  } catch {
-    /* ignore */
+  for (const link of [BIN_LINK, ...LEGACY_BIN_LINKS]) {
+    try {
+      fs.unlinkSync(link);
+    } catch {
+      /* ignore */
+    }
   }
   if (args.json) jsonOut({ ok: true });
   else console.log(c.ok("removed service and PATH shim. login files were left alone."));
@@ -1764,7 +1818,7 @@ async function main() {
   }
   if (cmd === "version" || args.version) {
     if (args.json) jsonOut({ version: VERSION });
-    else console.log(`qoder-cn-infer ${VERSION}`);
+    else console.log(`qoder4hermes ${VERSION}`);
     return 0;
   }
   if (args.region && !parseRegion(args.region)) {
@@ -1796,7 +1850,7 @@ async function main() {
 }
 
 const isMain = (() => {
-  // realpath-aware: the installed CLI is a symlink (~/.local/bin/qoder-cn-infer),
+  // realpath-aware: the installed CLI is a symlink (~/.local/bin/qoder4hermes),
   // so path.resolve(argv[1]) never equals the module's real path. Compare trees.
   try {
     return (

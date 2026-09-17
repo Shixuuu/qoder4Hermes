@@ -1,7 +1,7 @@
 /**
  * Minimal Telegram command bot for usage reporting — zero dependencies, fetch-based.
  *
- * Runs the same numbers as `qoder-cn-infer usage` in any Telegram chat:
+ * Runs the same numbers as `qoder4hermes usage` in any Telegram chat:
  *   /usage   credits used / remaining, reset window, local token + credit meter
  *   /status  local API + login state
  *   /help    command list
@@ -109,7 +109,7 @@ export function renderUsageText(data, { endpoint = data?.endpoint || "", label =
   } else if (accountError) {
     lines.push(`Account: ${escapeHtml(accountError)}`);
   } else {
-    lines.push("Account: not signed in — run  qoder-cn-infer login");
+    lines.push("Account: not signed in — run  qoder4hermes login");
   }
 
   const t = data?.local?.totals;
@@ -131,7 +131,7 @@ export function renderUsageText(data, { endpoint = data?.endpoint || "", label =
 }
 
 export function renderStatusText(status, { endpoint = "" } = {}) {
-  const lines = ["<b>qoder-cn-infer status</b>", ""];
+  const lines = ["<b>qoder4hermes status</b>", ""];
   lines.push(`API: ${status?.running ? "running" : "not running"}`);
   lines.push(`Login: ${status?.login ? "signed in" : "missing"}`);
   if (status?.region) lines.push(`Region: ${escapeHtml(status.region)}${status?.label ? ` (${escapeHtml(status.label)})` : ""}`);

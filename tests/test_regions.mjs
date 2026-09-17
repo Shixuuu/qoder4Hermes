@@ -17,28 +17,32 @@ import {
   parseRegion,
   resolveRegion,
   storedPatPath,
-} from "../qoder_cn_endpoint/regions.mjs";
+} from "../qoder4hermes_endpoint/regions.mjs";
 import {
   CHAT_URL,
   MODEL_LIST_URL,
   CN_GATEWAY,
   CN_OPENAPI,
-} from "../qoder_cn_endpoint/cn_cosy.mjs";
-import { envPat, exchangePat, fetchUserinfo, resolveIdentity } from "../qoder_cn_endpoint/cn_auth.mjs";
-import { fetchQuotaUsage, QUOTA_USAGE_URL } from "../qoder_cn_endpoint/quota.mjs";
+} from "../qoder4hermes_endpoint/cn_cosy.mjs";
+import { envPat, exchangePat, fetchUserinfo, resolveIdentity } from "../qoder4hermes_endpoint/cn_auth.mjs";
+import { fetchQuotaUsage, QUOTA_USAGE_URL } from "../qoder4hermes_endpoint/quota.mjs";
 import {
   CAMPAIGNS_URL,
   QCS_RESOLVE_URL,
   resolveDomainBase,
   runClaim,
   fetchFeatureGates,
-} from "../qoder_cn_endpoint/claim.mjs";
-import { formatUsagePlain, parseArgs } from "../bin/qoder-cn-infer.mjs";
+} from "../qoder4hermes_endpoint/claim.mjs";
+import { formatUsagePlain, parseArgs } from "../bin/qoder4hermes.mjs";
 
 const PAT_ENV_NAMES = [
   "QODERCN_PERSONAL_ACCESS_TOKEN",
   "QODER_PERSONAL_ACCESS_TOKEN",
   "QODER_PAT",
+  "QODER4HERMES_REGION",
+  "QODER4HERMES_CONFIG_DIR",
+  "QODER4HERMES_GLOBAL_INFER_HOST",
+  // pre-rename names are still honored as fallbacks; keep the tests hermetic
   "QODER_CN_INFER_REGION",
   "QODER_CN_INFER_CONFIG_DIR",
   "QODER_CN_INFER_GLOBAL_INFER_HOST",
@@ -97,17 +101,17 @@ test("endpointsFor(global) uses the qoder.sh hosts with identical paths", () => 
 });
 
 test("global inference host override: env wins, invalid values ignored, both paths identical", () => {
-  withEnv({ QODER_CN_INFER_GLOBAL_INFER_HOST: "https://api1.qoder.sh" }, () => {
+  withEnv({ QODER4HERMES_GLOBAL_INFER_HOST: "https://api1.qoder.sh" }, () => {
     assert.equal(endpointsFor("global").inferBase, "https://api1.qoder.sh");
   });
-  withEnv({ QODER_CN_INFER_GLOBAL_INFER_HOST: "https://api3.qoder.sh/extra/path" }, () => {
+  withEnv({ QODER4HERMES_GLOBAL_INFER_HOST: "https://api3.qoder.sh/extra/path" }, () => {
     assert.equal(endpointsFor("global").inferBase, "https://api2.qoder.sh");
   });
-  withEnv({ QODER_CN_INFER_GLOBAL_INFER_HOST: "http://insecure.example" }, () => {
+  withEnv({ QODER4HERMES_GLOBAL_INFER_HOST: "http://insecure.example" }, () => {
     assert.equal(endpointsFor("global").inferBase, "https://api2.qoder.sh");
   });
   // The override never touches the CN region.
-  withEnv({ QODER_CN_INFER_GLOBAL_INFER_HOST: "https://api1.qoder.sh" }, () => {
+  withEnv({ QODER4HERMES_GLOBAL_INFER_HOST: "https://api1.qoder.sh" }, () => {
     assert.equal(endpointsFor("cn").inferBase, CN_GATEWAY);
   });
 });
@@ -125,10 +129,10 @@ test("parseRegion/normalizeRegion accept aliases and reject typos", () => {
 test("resolveRegion precedence: explicit → env → config.json → cn", () => {
   const dir = tmpDir();
   fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify({ region: "global" }));
-  withEnv({ QODER_CN_INFER_CONFIG_DIR: dir }, () => {
+  withEnv({ QODER4HERMES_CONFIG_DIR: dir }, () => {
     assert.equal(resolveRegion(), "global", "config.json region applies");
     assert.equal(resolveRegion("cn"), "cn", "explicit wins over config");
-    process.env.QODER_CN_INFER_REGION = "cn";
+    process.env.QODER4HERMES_REGION = "cn";
     assert.equal(resolveRegion(), "cn", "env wins over config");
     assert.equal(resolveRegion("global"), "global", "explicit wins over env");
   });
@@ -137,7 +141,7 @@ test("resolveRegion precedence: explicit → env → config.json → cn", () => 
 
 test("PAT files and CLI login paths are per region", () => {
   const dir = tmpDir();
-  withEnv({ QODER_CN_INFER_CONFIG_DIR: dir }, () => {
+  withEnv({ QODER4HERMES_CONFIG_DIR: dir }, () => {
     assert.ok(storedPatPath("cn").endsWith(path.join(dir, "pat")));
     assert.ok(storedPatPath("global").endsWith(path.join(dir, "pat.global")));
     fs.writeFileSync(path.join(dir, "pat.global"), "pt-global-file\n");
@@ -187,7 +191,7 @@ test("exchangePat surfaces the rejected-token hint with the region's token URL",
 
 test("resolveIdentity(global) exchanges the global env PAT and only talks to qoder.sh", async () => {
   await withEnvAsync(
-    { QODER_PERSONAL_ACCESS_TOKEN: "pt-global-env", QODER_CN_INFER_CONFIG_DIR: tmpDir() },
+    { QODER_PERSONAL_ACCESS_TOKEN: "pt-global-env", QODER4HERMES_CONFIG_DIR: tmpDir() },
     async () => {
     const calls = [];
     const stub = async (method, url) => {
@@ -214,7 +218,7 @@ test("resolveIdentity(global) exchanges the global env PAT and only talks to qod
 
 test("resolveIdentity(cn) never picks up the global env var", async () => {
   await withEnvAsync(
-    { QODER_PERSONAL_ACCESS_TOKEN: "pt-global-env", QODER_CN_INFER_CONFIG_DIR: tmpDir() },
+    { QODER_PERSONAL_ACCESS_TOKEN: "pt-global-env", QODER4HERMES_CONFIG_DIR: tmpDir() },
     async () => {
     try {
       const id = await resolveIdentity(async () => ({ status: 500, body: "" }), {
